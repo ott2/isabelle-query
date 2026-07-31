@@ -253,6 +253,65 @@ PROOF_RE = re.compile(
 )
 BLANK_RE = re.compile(r"^\s*$")
 TOPLEVEL_RE = re.compile(r"^[a-z]")
+
+# Outer commands that declare nothing and so are never indexed as entries,
+# but which still bound the declaration above them.  `compute_spans` ends an
+# entry at the next entry-or-section line; without these an `instance` proof,
+# a `lemmas` alias or the `end` of an enclosing block falls INSIDE the
+# preceding declaration's span.  Two things then go wrong: the span reported
+# by `enclosing` / `outline` / `largest` is inflated, and a fact cited by the
+# absorbed command lands in that declaration's own def-site range, where the
+# call-graph scan discards it as a self-mention — so the cited fact reads as
+# unused.  The canonical case is an `equal` instantiation:
+#
+#     instantiation foo :: equal begin
+#     definition "equal_foo (x::foo) y = (x = y)"
+#     instance by standard (simp add: equal_foo_def)
+#     end
+#
+# where `equal_foo` swallows the very `instance` proof that cites it.
+_SPAN_BOUNDARY_COMMANDS = frozenset({
+    "begin", "end", "instance", "instantiation", "interpretation",
+    "sublocale", "locale", "context", "declare", "lemmas", "notation",
+    "no_notation", "syntax", "no_syntax", "translations",
+    "code_printing", "export_code", "code_datatype", "code_reflect",
+    "typedecl", "typedef", "consts", "print_translation",
+})
+_LEADING_CMD_RE = re.compile(r"^([a-z][a-z_0-9]*)")
+
+
+def _structural_command_lines(lines: list[str],
+                              comment_ranges: "list[range] | None" = None,
+                              ) -> list[int]:
+    """1-indexed lines that open a span-bounding outer command.
+
+    Fed to :func:`compute_spans` alongside the section lines, so a
+    declaration ends where the next outer command begins rather than running
+    on through it.  See ``_SPAN_BOUNDARY_COMMANDS``.
+
+    Lines inside ``(* ... *)`` are skipped: a commented-out `end` is prose,
+    not a command, and must not cut the declaration above it.
+    """
+    masked: set[int] = set()
+    for r in (comment_ranges or []):
+        masked.update(r)
+    out: list[int] = []
+    for line_no_0, line in enumerate(lines):
+        line_no = line_no_0 + 1
+        if line_no in masked:
+            continue
+        m = _LEADING_CMD_RE.match(line)  # column 0: introducer position
+        if m is None or m.group(1) not in _SPAN_BOUNDARY_COMMANDS:
+            continue
+        # Report the boundary at the head of any blank run before the
+        # command, so the preceding entry's span ends on its last real line
+        # rather than on the separating blank — the same "no trailing
+        # blanks" rule the entry-to-entry boundary already follows.
+        b = line_no
+        while b > 1 and not lines[b - 2].strip():
+            b -= 1
+        out.append(b)
+    return out
 SECTION_RE = re.compile(r"^(chapter|section|subsection|subsubsection)\s+\\<open>(.*)")
 TEXT_OPEN_RE = re.compile(r"^\s*(text|text_raw)\s*\\<open>")
 COMMENT_LINE_RE = re.compile(r"\\<comment>\s*\\<open>(.*)$")
@@ -1009,7 +1068,10 @@ def _parse_one(thy: str, thy_path: Path,
     # uses as the boundary so a leading doc is charged to the entry it
     # documents (not the preceding one).  Roadmaps need the resulting thy_end.
     _attach_preambles(entries, lines, text_blocks)
-    compute_spans(entries, [s[2] for s in outline], len(lines))
+    compute_spans(entries,
+                  [s[2] for s in outline]
+                  + _structural_command_lines(lines, comment_ranges),
+                  len(lines))
     _attach_roadmaps(entries, comment_lines)
     for e in entries:
         e.theory = thy
@@ -1331,7 +1393,8 @@ def _is_citation_name(name: str, drop_upto: int = _DROP_NAMES_UPTO) -> bool:
 
 
 def _build_call_graph(sections: list[TheorySection],
-                      drop_upto: int = _DROP_NAMES_UPTO) -> CallGraph:
+                      drop_upto: int = _DROP_NAMES_UPTO,
+                      derived: bool = False) -> CallGraph:
     """Single-pass scan building a full name-level call graph.
 
     Uses the shared filtering helpers (`_noise_ranges`,
@@ -1339,6 +1402,12 @@ def _build_call_graph(sections: list[TheorySection],
     antiquotation-only mentions.  ``drop_upto`` is forwarded to
     :func:`_is_citation_name` — length-1 names (variable collisions) are
     excluded by default; see that function and ``--drop-names-upto``.
+
+    ``derived`` treats Isabelle's definitional spellings (``foo_def``,
+    ``foo_defs``) as citations of ``foo``.  Off by default, because the graph
+    is over FACTS and ``foo_def`` is a different fact from ``foo``; only
+    :func:`cmd_unused` turns it on, where the question is whether the
+    DECLARATION is dead.  See the note there.
     """
     # 1. Collect candidate names (same filter as cmd_dead).  A name that is a
     #    proof method / attribute / keyword / numeral — or too short to tell
@@ -1350,6 +1419,21 @@ def _build_call_graph(sections: list[TheorySection],
             if (e.tag in _CITABLE_TAGS
                     and e.name != "?" and _is_citation_name(e.name, drop_upto)):
                 name_set.add(e.name)
+
+    # 1b. Derived-fact spellings.  Isabelle mints `foo_def` from `definition
+    #     foo`, and citing it IS a use of `foo` — often the only one, since an
+    #     `equal` instance proof cites nothing but `equal_foo_def`.  The dotted
+    #     families (`foo.simps`, `foo.induct`) need no help: the `[\w']+`
+    #     tokeniser already splits them, leaving a bare `foo` to match.  The
+    #     underscore family does not split, so map it back explicitly.
+    derived_base: dict[str, str] = {}
+    for n in (name_set if derived else ()):
+        for suffix in ("_def", "_defs"):
+            spelling = n + suffix
+            # An entry genuinely named `foo_def` keeps its own identity; only
+            # spellings that are not themselves entries are treated as derived.
+            if spelling not in name_set:
+                derived_base[spelling] = n
 
     # 2. Build def-site and text-block exclusion ranges.
     def_sites = _build_def_sites(sections, name_set)
@@ -1389,6 +1473,7 @@ def _build_call_graph(sections: list[TheorySection],
     # line (millions of times), and a local is a fast LOAD_FAST vs an attribute
     # lookup on each.
     ns_inter = name_set.intersection
+    derived_inter = set(derived_base).intersection
     antiq_sub = antiq_re.sub
     word_findall = word_re.findall
     sym_findall = sym_re.findall
@@ -1418,7 +1503,15 @@ def _build_call_graph(sections: list[TheorySection],
             # findalls run on just those lines, not every line.  The union is
             # identical to scanning all three unconditionally (the oracle's
             # reference), but skips the provably-redundant passes.
-            cand = ns_inter(word_findall(stripped))
+            words = word_findall(stripped)
+            cand = ns_inter(words)
+            # `foo_def` resolves to `foo` (see derived_base).  Guarded on the
+            # map being non-empty so the default path pays a truthiness test
+            # rather than a set intersection on every line of every theory.
+            if derived_base:
+                dv = derived_inter(words)
+                if dv:
+                    cand = cand | {derived_base[d] for d in dv}
             if '\\<' in stripped:
                 cand |= ns_inter(sym_findall(stripped))
             if '"' in stripped:
@@ -1426,9 +1519,18 @@ def _build_call_graph(sections: list[TheorySection],
             if not cand:
                 continue
             caller_entry = _entry_at_line(idx, line_no)
-            if caller_entry is None or caller_entry.name == "?":
+            if caller_entry is not None and caller_entry.name == "?":
                 continue
-            caller_name = caller_entry.name
+            # A citation outside every indexed entry is still a real use: the
+            # span-bounding outer commands (`instance`, `lemmas`, `declare`,
+            # `code_printing`, `export_code`) cite facts but declare nothing,
+            # so they are not entries and own no lines.  Dropping their
+            # citations makes the cited fact read as unused — an `equal`
+            # instance proof is the whole reason its own `equal_*` definition
+            # exists.  Attribute them to a synthetic per-theory top-level
+            # caller so the edge exists and carries a location.
+            caller_name = (caller_entry.name if caller_entry is not None
+                           else f"{sec.theory}:<toplevel>")
             for name in cand:
                 d_ranges = d_map.get(name)
                 if d_ranges and any(line_no in r for r in d_ranges):
@@ -3056,7 +3158,13 @@ def _render_forest(sections: list[TheorySection],
 
 def cmd_unused(sections: list[TheorySection], flags: 'CmdFlags') -> None:
     """List entries with zero callers in proof bodies."""
-    graph = _build_call_graph(sections, flags.drop_names_upto)
+    # `derived=True` here and nowhere else.  The call graph is over FACTS, and
+    # `foo_def` is a different fact from `foo` — `test_substring_is_not_a_call`
+    # pins exactly that, and `callers foo` keeps meaning `foo`.  Deadness,
+    # though, is a question about the DECLARATION: deleting `definition foo`
+    # breaks every proof citing `foo_def`, so such a proof keeps `foo` alive.
+    # Asking the fact-level question here reports live definitions as dead.
+    graph = _build_call_graph(sections, flags.drop_names_upto, derived=True)
 
     keep = set(flags.keep)
     if keep:

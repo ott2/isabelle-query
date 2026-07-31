@@ -59,7 +59,8 @@ def tags_by_name(section):
 _ANTIQ_RE = re.compile(r'@\{(?:text|thm|term|const)\s+["\']?\w+["\']?\}')
 
 
-def brute_force_call_graph(sections, drop_upto=cli._DROP_NAMES_UPTO):
+def brute_force_call_graph(sections, drop_upto=cli._DROP_NAMES_UPTO,
+                           derived=False):
     """Reference O(lines x names) call-graph builder used as a test oracle.
 
     Mirrors ``cli._build_call_graph`` semantics (text-block skip,
@@ -67,10 +68,18 @@ def brute_force_call_graph(sections, drop_upto=cli._DROP_NAMES_UPTO):
     via the naive per-name boundary search rather than tokenisation.
     ``drop_upto`` is forwarded to ``cli._is_citation_name`` exactly as the
     fast builder forwards it, so the two stay in parity at any threshold.
+
+    ``derived`` mirrors the fast builder likewise: with it set, Isabelle's
+    definitional spellings (``foo_def``, ``foo_defs``) count as citations of
+    ``foo`` unless that spelling is itself an indexed entry.
     """
     name_set = {e.name for s in sections for e in s.entries
                 if e.tag in cli._CITABLE_TAGS
                 and e.name != "?" and cli._is_citation_name(e.name, drop_upto)}
+    # Spellings searched for each name: itself, plus its derived forms.
+    spellings = {n: [n] + ([s for s in (n + "_def", n + "_defs")
+                            if s not in name_set] if derived else [])
+                 for n in name_set}
     def_sites = cli._build_def_sites(sections, name_set)
     text_ranges = cli._noise_ranges(sections)
     line_index = cli._build_line_index(sections)
@@ -87,15 +96,18 @@ def brute_force_call_graph(sections, drop_upto=cli._DROP_NAMES_UPTO):
                 continue
             stripped = _ANTIQ_RE.sub("", line)
             for name in name_set:
-                if name not in stripped:
-                    continue
-                if not re.search(cli._isa_word_pattern(name), stripped):
+                if not any(sp in stripped
+                           and re.search(cli._isa_word_pattern(sp), stripped)
+                           for sp in spellings[name]):
                     continue
                 if any(line_no in r for r in d_map.get(name, set())):
                     continue
                 ce = cli._entry_at_line(idx, line_no)
-                if ce is None or ce.name == "?":
+                if ce is not None and ce.name == "?":
                     continue
-                callers[name].add(ce.name)
-                callees.setdefault(ce.name, set()).add(name)
+                # An entryless citation is a top-level command (`instance`,
+                # `lemmas`, `export_code`): a real use with no owning entry.
+                caller = ce.name if ce is not None else f"{sec.theory}:<toplevel>"
+                callers[name].add(caller)
+                callees.setdefault(caller, set()).add(name)
     return cli.CallGraph(callers=callers, callees=callees, all_names=name_set)
