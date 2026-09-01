@@ -126,11 +126,20 @@ bare label, and `.github/workflows/release.yml` publishes the *tagged commit's*
 message as the GitHub Release body. Notes written into the tag annotation are
 silently dropped. Write them in the bump commit, then `make release`.
 
-Build artifacts go in **`dist/`** — plain `python -m build`, no `--outdir`. It is
-the default, it is what `twine upload dist/*` expects, and it is already
-gitignored. (Note `build` does not clean it, so old versions accumulate; name
-the files or clear it first rather than re-offering a published release.) The
-**user** uploads to PyPI, not the assistant.
+`make release` now **builds before it tags** — guards (clean tree, tag not
+taken) first, then `python -m build`, then the tag and push — so a broken build
+costs nothing while a pushed tag cannot be taken back. `make dist` does the
+build alone.
+
+Artifacts go in **`dist/`**: plain `python -m build`, no `--outdir`, since that
+is the default and it is gitignored. `build` does **not** clean it, so every
+past release accumulates there — which is why the upload command is
+**version-scoped** and `make release` prints it as its last line:
+
+    twine upload -r pypi-isabelle-query dist/isabelle_query-<version>*
+
+A bare `dist/*` would re-offer already-published releases. The **user** uploads
+to PyPI, not the assistant: it is the one step here that cannot be undone.
 
 ## Credit
 
