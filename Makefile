@@ -5,14 +5,17 @@
 # `make test` runs the suite.
 #
 # Release: pyproject.toml's [project].version is the single source of truth for the
-# release version. `make release` reads it, creates an annotated git tag
-# v<version> on the current commit, then pushes the current branch and that
-# tag to the remote. GitHub renders a pushed tag as a Release with an
-# auto-generated source archive:
+# release version. `make release` reads it, builds the sdist + wheel into
+# dist/, creates an annotated git tag v<version> on the current commit, then
+# pushes the current branch and that tag to the remote. GitHub renders a pushed
+# tag as a Release whose body is the tagged commit's message (see
+# .github/workflows/release.yml), so write the changelog in the version-bump
+# commit:
 #   https://github.com/ott2/isabelle-query/releases/tag/v<version>
 #
-# To attach human-readable notes afterwards:
-#   gh release create v<version> --title "isabelle-query <version>" --notes "..."
+# The PyPI upload is deliberately NOT automated — it is the one step that
+# cannot be undone, and it is the maintainer's. `release` prints the exact
+# command as its last line.
 
 REMOTE ?= origin
 
@@ -20,9 +23,15 @@ REMOTE ?= origin
 # 3.11+ for tomllib; the packaged library still supports 3.9+ independently.
 VERSION := $(shell python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
 TAG     := v$(VERSION)
+# Distribution filenames for THIS version.  `python -m build` does not clean
+# dist/, so old releases accumulate there — naming the version explicitly is
+# what stops `twine upload` re-offering an already-published one.
+DIST    := dist/isabelle_query-$(VERSION)
+# The `~/.pypirc` repository entry to upload to.
+PYPI_REPO ?= pypi-isabelle-query
 
 .DEFAULT_GOAL := version
-.PHONY: version release dev test
+.PHONY: version release dev test dist
 
 # Install the package (editable) plus the PEP 735 `test` dependency group
 # into the active environment.  Create and activate a venv first; then a
@@ -39,6 +48,13 @@ test:
 # Print the tag that `make release` would create.
 version:
 	@echo $(TAG)
+
+# Build the sdist + wheel into dist/.  Plain `python -m build`, no --outdir:
+# dist/ is the default, it is what twine expects, and it is gitignored.
+dist:
+	python3 -m build
+	@ls -1 $(DIST)* 2>/dev/null || { \
+		echo "error: no artifacts matching $(DIST)*"; exit 1; }
 
 # Tag the current commit as v<version> (annotated), then push the current
 # branch and the tag to $(REMOTE).
@@ -64,6 +80,17 @@ release:
 		echo "         for fuller notes.  Continuing in 3s (Ctrl-C to abort)..."; \
 		sleep 3; \
 	fi
+	@# Build BEFORE tagging: a broken build then costs nothing, where a tag
+	@# that is already pushed cannot be taken back.
+	@$(MAKE) --no-print-directory dist
 	git tag -a "$(TAG)" -m "isabelle-query $(VERSION)"
 	git push $(REMOTE) HEAD "$(TAG)"
+	@echo
 	@echo "Released $(TAG); CI will publish HEAD's commit message at https://github.com/ott2/isabelle-query/releases/tag/$(TAG)"
+	@echo
+	@echo "Remaining step, yours — upload to PyPI:"
+	@echo
+	@echo "    twine upload -r $(PYPI_REPO) $(DIST)*"
+	@echo
+	@echo "(version-scoped on purpose: dist/ keeps every past build, and a bare"
+	@echo " 'dist/*' would re-offer an already-published release.)"
