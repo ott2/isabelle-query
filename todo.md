@@ -7,29 +7,76 @@ finding it again with `git log --grep`.
 Conventions for changing the tool (the CLI contract, verification habits) live
 in `CONTRIBUTING.md`.
 
-- [ ] `[markup-step-model]` Resolve ONE discrepancy, then stop.  On
-      `DitherTM`, `PIDE/markup` decodes to 87 `command_span`s each carrying
-      the keyword, Isabelle's own **kind** (`thy_goal_stmt` / `qed` /
-      `prf_script` / `prf_decl`) and an exact extent — and `query` sees **38
-      steps where Isabelle marks 41 proof commands**.  Every `shape` metric
-      rests on the step model, and `shape` numbers are research output, so
-      three unexplained steps are worth an afternoon.
-      `scripts/probe_pide_markup.py` already decodes the markup; the work is
-      "explain the three".
-      **Deliberately NOT a fixture corpus.**  This replaces the former
-      `[markup-oracle]`, which specced a committed, digest-gated,
-      release-pinned harvest of `(source, answer)` pairs.  The precedent says
-      that is the wrong half: `[export-oracle]` used Isabelle ground truth as
-      a **one-time discovery instrument**, shipped eight commits under
-      `[declared-names]` (713 unindexed names, 40,741 cited occurrences), and
-      was then RETIRED — `git log --grep='\[declared-names\]'`.  Nothing
-      standing was kept and nothing needs maintaining.  As `probe(#8)` put it:
-      once the oracle says WHAT to look for, the measurement is ordinary
-      source scanning at full corpus scale, on a machine with no Isabelle.
-      So if this finds a defect: fix it, pin it with a **hand-written**
-      fixture (per `CLAUDE.md` — hand-compute the value, then make the code
-      match), cite the markup finding in the commit message, and let the probe
-      go.  No heap dependency enters `pytest`.
+- [ ] `[oracle-drop-rate]` The corpus call-graph test is **RED**:
+      `test_fast_call_graph_matches_oracle_on_subset` reports the fast builder
+      dropping **505 of 10,898** caller-edges against the brute-force reference,
+      where `_MAX_DROP_FRACTION = 0.005` allows 54.
+      Reproduced on `6168b9e` (v0.8.1 + docs) as well as on HEAD, so it predates
+      the `[markup-step-model]` work and is not that change.  The run also takes
+      ~110s where the handoff recorded ~23s, which points at the AFP checkout
+      having moved under the 120-file subset rather than at a code change — but
+      that is a hypothesis, not a measurement.  Establish which before touching
+      the ceiling: a threshold raised to make a test green is worthless, and the
+      test exists precisely because the fast builder must not silently diverge.
+      `ISABELLE_QUERY_CORPUS=~/repos/afp/thys pytest -q tests/test_corpus.py`
+
+- [ ] `[decl-commands]` Four fact-declaring commands are **not declarations**,
+      so `query` cannot see them and — worse — they do not bound the previous
+      entry either, so the lemma above them swallows their proof.  `DECL_RE`
+      lists `lemma|corollary|theorem` and stops.
+      Measured over 2,644 theories (60 AFP entries + all of HOL/FOL/ZF) by
+      `scripts/probe_missing_decl_commands.py`, command position only:
+
+          lemmas            3,491      proposition        601
+          named_theorems      207      schematic_goal     160
+          private lemma       275      qualified lemma    209   (+~250 modified)
+
+      **`proposition` is the clear one**: Isabelle declares it `thy_goal_stmt`
+      in `Pure`, the identical kind to `lemma` / `theorem` / `corollary`, three
+      of which `DECL_RE` already knows.  There is no design note excluding it —
+      the table's only deliberate absences are `context` and `interpretation`,
+      which reopen or instantiate rather than declare.
+      The knock-on is what makes it worth doing rather than tidy:
+      `probe_proof_bearing_commands.py` reads `proposition` as 34.3% unscanned
+      rather than 100%, because two thirds of the time the preceding lemma's
+      span has already reached over it and its steps were counted as that
+      lemma's.  So this moves the entry set AND the census, and the fix must
+      report both.
+      `private` / `qualified` are a different shape: namespace MODIFIERS that
+      may precede any declaration, so the fix is a prefix skip, not four more
+      table rows.  `lemmas` / `named_theorems` declare a citable fact with no
+      proof (they touch `find` / `show` / `callers`, not `shape`);
+      `schematic_goal` has one.  Worth splitting if they do not share a change.
+
+- [ ] `[proof-bearing-commands]` **(scope call, not a defect.)**  A command that
+      proves something but declares no fact — `instance`, `sublocale`,
+      `interpretation`, `subclass`, `termination`, `notepad` — is not an
+      `Entry`, has no `proof_line`, and its proof is invisible to every `shape`
+      verb.  Measured by `scripts/probe_proof_bearing_commands.py` over 687
+      theories: **11,300 proof commands, ~2% of the corpus**, 100% unscanned
+      for each of these owners.
+
+          interpretation dual: abstract_boolean_algebra ...  HOL/Boolean_Algebras:140
+            apply standard                     <- five proof commands,
+                 apply (rule disj_conj_distrib)    none of them measured
+                apply (rule conj_disj_distrib)
+               apply simp_all
+            done
+
+          instance                6,706   sublocale         1,444
+          subclass                  707   lift_definition     577
+          global_interpretation     574   interpretation      752
+          termination               194   notepad             160
+
+      The question is whether `shape` measures *proofs* or *proofs of facts*.
+      Today it is the second, by accident rather than by decision — the entry
+      model is a **declaration** index and `shape` rides on it.  Both readings
+      are defensible and the numbers differ by ~2%, so the answer belongs in a
+      commit message before any code moves.  Note `instance` alone is 6,706 and
+      is mostly one-liners (`instance ..`), so the population is not shaped
+      like the lemma population and would move the aggregate distributions, not
+      just their totals.  Distinct from `[decl-commands]`, which is a defect in
+      the same probe's other half.
 
 - [ ] `[comment-newline]` A `\<comment>` may be separated from its cartouche
       by a newline.  Isabelle's `comment_prefix` allows any blanks between the
