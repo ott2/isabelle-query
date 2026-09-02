@@ -207,15 +207,13 @@ def _classify_step_line(stripped: str) -> str:
     if head in _CLOSING_KEYWORDS or head in (".", ".."):
         return "closing"
     # A terminal proof method reached later in a prefix that no step keyword
-    # leads still closes the goal.  The case that matters: a proof written as a
-    # single `unfolding <facts> by <method>` (or `unfolding <facts> ..`) line —
-    # `unfolding` is a fact-list keyword, not a step keyword, so the head checks
-    # miss it, yet the line IS a closing step.  Without this it classifies as
-    # `other`, a proof that is nothing but such a line scans to zero steps, and
-    # the entry drops out of the census (masked until spans stopped over-running
-    # into the next command and lending these proofs borrowed steps).  `by` /
-    # `done` / `..` are matched anywhere; a bare single `.` is not, since `.` is
-    # also the token split inside a dotted fact name (`Foo.bar`).
+    # leads still closes the goal — a line led by a fact name or by a word this
+    # classifier does not know.  It used to carry `unfolding <facts> by
+    # <method>` as well, back when `unfolding` was not a step keyword; that line
+    # is now claimed by the plumbing head check above, exactly as
+    # `using <facts> by <method>` always was.  `by` / `done` / `..` are matched
+    # anywhere; a bare single `.` is not, since `.` is also the token split
+    # inside a dotted fact name (`Foo.bar`).
     if any(t in _CLOSING_KEYWORDS or t == ".." for t in tokens):
         return "closing"
     return "other"
@@ -707,17 +705,55 @@ def _line_facts(step: Step, lines: list[str]) -> tuple[set[str], bool]:
     return _cited_facts_on_line(lines[step.line - 1])
 
 
+# Plumbing commands that cite BACKWARD — for the goal already stated, not the
+# next one.  Isar admits `using` / `unfolding` only in `proof(prove)` mode, i.e.
+# after a goal statement and before its method, so their facts serve that goal:
+#
+#     have a: "P"
+#       using q by simp        <- q is a premise OF a, not of the next goal
+#
+# `from` / `with` / `then` / `moreover` / `ultimately` are the forward half
+# (`proof(state)` mode, before a goal statement) and keep the pending-chain
+# behaviour.  Isabelle's own keyword kinds put the forward four under
+# `prf_chain` and these two under `prf_decl`, which is the same distinction
+# read off the grammar rather than inferred from usage.
+_BACKWARD_CITE_CMDS = frozenset({"using", "unfolding"})
+
+
 def annotate_fanin(steps: list[Step], sec: TheorySection) -> None:
     r"""**M5a fan-in** — set ``step.fanin`` on each goal step to the number of
     distinct facts cited *for* it.
 
     A goal step's fan-in is the union of the facts on its own line
     (``from a have p: "P" using b``) and those of the standalone plumbing lines
-    that serve it — a ``from a`` / ``using b`` line on its own, whose facts
-    attach to the next goal.  A closing step (``qed``, a standalone ``by``) is a
-    boundary that discards any not-yet-consumed plumbing.  ``step.fanin_covered``
-    is ``False`` when a method shape on the contributing lines could not be
-    classified (folded into the census's method-syntax coverage statistic).
+    that serve it.  **Which goal a plumbing line serves depends on its keyword,
+    and the two directions are not interchangeable** (:data:`_BACKWARD_CITE_CMDS`):
+
+    * ``from`` / ``with`` / ``then`` / ``moreover`` / ``ultimately`` chain
+      FORWARD — they run in ``proof(state)`` mode, before a goal statement, so
+      their facts accumulate and attach to the next goal.
+    * ``using`` / ``unfolding`` cite BACKWARD — Isar admits them only in
+      ``proof(prove)`` mode, after a goal has been stated, so their facts belong
+      to the goal already open.
+
+    Treating both as forward was an off-by-one-goal misattribution: in
+
+        have a: "P"
+          using q by simp
+        have b: "Q"
+
+    ``q`` was credited to ``b`` and ``a`` was left at zero.  It survived because
+    the *totals* stayed plausible — each goal received some other goal's
+    premises — so only a per-step check could see it.  Corrected, M5a rose 15.9%
+    over a 40-entry AFP sample: the shift also *lost* every citation whose
+    ``using`` line had no following goal, which is why the fix is not
+    redistribution-neutral.
+
+    A closing step (``qed``, a standalone ``by``) is a boundary: it discards any
+    not-yet-consumed forward chain and ends the backward-citable goal.
+    ``step.fanin_covered`` is ``False`` when a method shape on the contributing
+    lines could not be classified (folded into the census's method-syntax
+    coverage statistic).
 
     Implicit ``this`` chaining (``then`` / ``moreover`` / ``ultimately``) brings
     an *unnamed* fact, so it adds nothing to this explicit-citation count — that
@@ -737,17 +773,27 @@ def annotate_fanin(steps: list[Step], sec: TheorySection) -> None:
     lines = sec.source()
     pending: set[str] = set()      # facts from plumbing lines not yet consumed
     pending_covered = True
+    open_goal: Step | None = None  # the goal a BACKWARD cite would serve
+    seen: set[str] = set()         # what that goal has already been credited
     for s in steps:
         facts, covered = _line_facts(s, lines)
-        if s.kind == "plumbing":
+        if s.kind == "plumbing" and s.kw in _BACKWARD_CITE_CMDS:
+            if open_goal is not None:
+                fresh = facts - seen
+                open_goal.fanin += len(fresh)
+                open_goal.fanin_covered = open_goal.fanin_covered and covered
+                seen |= fresh
+        elif s.kind == "plumbing":
             pending |= facts
             pending_covered = pending_covered and covered
         elif s.kind == "goal":
             s.fanin = len(facts | pending)
             s.fanin_covered = covered and pending_covered
             pending, pending_covered = set(), True
+            open_goal, seen = s, facts | pending
         elif s.kind == "closing":
             pending, pending_covered = set(), True
+            open_goal, seen = None, set()
 
 
 # --- M5b: live-fact space (abstract metric A1, reading (i)) -----------------

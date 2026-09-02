@@ -993,6 +993,7 @@ CONTEXT_KEYWORDS = frozenset({
 })
 PLUMBING_KEYWORDS = frozenset({
     "from", "using", "with", "note", "moreover", "ultimately", "then",
+    "unfolding",
 })
 CLOSING_KEYWORDS = frozenset({
     "by", "apply", "done", "qed",

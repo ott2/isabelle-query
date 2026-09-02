@@ -95,24 +95,34 @@ class ClassifyLine(unittest.TestCase):
         self.assertEqual(
             shape._classify_step_line('note x = "no have here"'), "plumbing")
 
-    def test_prefixed_terminal_method_is_closing(self):
-        # A single `unfolding <facts> by <method>` line leads with a fact-list
-        # keyword, not a step keyword, so the head checks miss it — but the
-        # trailing `by` closes the goal, so it is a closing step, not `other`.
-        # (Otherwise a proof that is only this line scans to zero steps and the
-        # entry drops out of the census entirely.)
-        self.assertEqual(
-            shape._classify_step_line("unfolding foo_def by simp"), "closing")
-        # `..` (proof by the obvious rule) is a terminal too: `unfolding X ..`
-        self.assertEqual(
-            shape._classify_step_line("unfolding a b .."), "closing")
-        # bare `unfolding` with no terminal method is still not a step by itself
-        self.assertEqual(shape._classify_step_line("unfolding foo_def"), "other")
-        # a single `.` from a dotted fact name must NOT read as the `.` closer
-        self.assertEqual(
-            shape._classify_step_line("unfolding Foo.bar_def"), "other")
-        # a plumbing/goal head is unaffected — its own rule wins first
-        self.assertEqual(shape._classify_step_line("using a by auto"), "plumbing")
+    def test_unfolding_is_a_step_keyword_like_using(self):
+        # `unfolding` is a proof command — Isabelle's own keyword kind for it is
+        # `prf_decl`, the same kind as `using` — so it leads a step exactly as
+        # `using` does, whether or not a terminal method follows it on the line.
+        #
+        # It did not, and a standalone `unfolding` line scanned to nothing:
+        # 5,600 lost steps over the 685 theories `probe_step_alignment.py`
+        # compares against Isabelle's `PIDE/markup` [markup-step-model].  The
+        # two spellings were also inconsistent with each other, which is what
+        # made the gap easy to miss — `using X by simp` was plumbing while
+        # `unfolding X by simp` was closing.
+        for line in ("unfolding foo_def",
+                     "unfolding foo_def by simp",
+                     "unfolding a b ..",
+                     "unfolding Foo.bar_def"):
+            self.assertEqual(shape._classify_step_line(line), "plumbing", line)
+        # …and `using` reads the same way in every one of those shapes.
+        for line in ("using a", "using a by auto", "using a ..",
+                     "using Foo.bar"):
+            self.assertEqual(shape._classify_step_line(line), "plumbing", line)
+
+    def test_unknown_head_with_a_terminal_method_is_closing(self):
+        # The fallback that remains: a line led by a fact name or by a word the
+        # classifier does not know, but carrying a terminal method, still closes.
+        self.assertEqual(shape._classify_step_line("foo_def by simp"), "closing")
+        self.assertEqual(shape._classify_step_line("foo bar .."), "closing")
+        # A single `.` from a dotted fact name must NOT read as the `.` closer.
+        self.assertEqual(shape._classify_step_line("Foo.bar_def"), "other")
 
 
 class FlatProof(unittest.TestCase):
@@ -122,11 +132,11 @@ class FlatProof(unittest.TestCase):
         self.assertEqual(_shape(_steps("flat_proof")),
                          [(6, 0, "by", "closing")])
 
-    def test_single_line_unfolding_by_is_one_closing_step(self):
+    def test_single_line_unfolding_by_is_one_step(self):
         # Regression: a proof that is a lone `unfolding ... by` line must scan to
-        # one closing step (so `analyze_proof` returns a record) rather than zero
-        # (which drops the entry).  `bar` follows so `foo`'s span is naturally
-        # bounded — the gap is in step classification, not the span.
+        # one step (so `analyze_proof` returns a record) rather than zero (which
+        # drops the entry).  `bar` follows so `foo`'s span is naturally bounded —
+        # the gap is in step classification, not the span.
         thy = ('theory T imports Main begin\n'
                'lemma foo: "True"\n'
                '  unfolding refl by simp\n'
@@ -136,8 +146,26 @@ class FlatProof(unittest.TestCase):
         sec = section_from(thy, "T")
         foo = _entry(sec, "foo")
         self.assertEqual([(s.kind, s.kw) for s in shape._scan_steps(sec, foo)],
-                         [("closing", "unfolding")])
+                         [("plumbing", "unfolding")])
         self.assertIsNotNone(shape.analyze_proof(sec, foo))
+
+    def test_standalone_unfolding_line_is_its_own_step(self):
+        # [markup-step-model]: `unfolding` on a line of its own is a command
+        # Isabelle counts (kind `prf_decl`) and `query` did not — the proof
+        # scanned to ONE step where Isabelle marks two.  Hand-computed from
+        # `DitherTM:155`, whose shape this reproduces.
+        thy = ('theory T imports Main begin\n'
+               'lemma foo: "True"\n'
+               '  unfolding refl\n'
+               '  by simp\n'
+               'lemma bar: "True"\n'
+               '  by simp\n'
+               'end\n')
+        sec = section_from(thy, "T")
+        self.assertEqual(
+            [(s.line, s.kind, s.kw)
+             for s in shape._scan_steps(sec, _entry(sec, "foo"))],
+            [(3, "plumbing", "unfolding"), (4, "closing", "by")])
 
 
 class ChainedProof(unittest.TestCase):
@@ -239,6 +267,79 @@ class FanIn(unittest.TestCase):
 
     def test_flat_proof_has_no_goal_steps(self):
         self.assertEqual(self._goal_fanins("flat_proof"), [])
+
+
+class CitationDirection(unittest.TestCase):
+    r"""M5a: WHICH goal a standalone plumbing line serves.
+
+    Isar splits the plumbing keywords by proof mode, and the two halves point in
+    opposite directions.  `from` / `with` / `then` / `moreover` / `ultimately`
+    run in `proof(state)` — before a goal is stated — so they chain forward into
+    the next one.  `using` / `unfolding` are legal only in `proof(prove)` —
+    after a goal is stated, before its method — so they cite backward, for the
+    goal already open.
+
+    Every value below is read off the source by hand.  The fixture is written so
+    that a direction error cannot pass: each goal cites a DIFFERENT fact, so
+    crediting the wrong goal produces the wrong list rather than the same
+    multiset in a different order (which `[1, 1]` would not have caught).
+    """
+
+    THY = ('theory T imports Main begin\n'                    # 1
+           'lemma a1: "True" by simp\n'                       # 2
+           'lemma a2: "True" by simp\n'                       # 3
+           'lemma r: "True"\n'                                # 4
+           'proof -\n'                                        # 5
+           '  have p: "True"\n'                               # 6
+           '    using a1 by simp\n'                           # 7
+           '  have q: "True"\n'                               # 8
+           '    unfolding a2 by simp\n'                       # 9
+           '  from p show "True" by blast\n'                  # 10
+           'qed\n'                                            # 11
+           'end\n')                                           # 12
+
+    def _annotated(self):
+        sec = section_from(self.THY, "T")
+        entry = next(e for e in sec.entries if e.name == "r")
+        steps = shape._scan_steps(sec, entry)
+        shape.annotate_fanin(steps, sec)
+        return sec, steps
+
+    def test_using_and_unfolding_credit_the_goal_above(self):
+        # `have p` is served by line 7's `using a1`  -> 1
+        # `have q` is served by line 9's `unfolding a2` -> 1
+        # `from p show` cites `p` on its own line       -> 1
+        # Before the fix these read [0, 1, 1]: a1 was credited to `q` and a2 to
+        # the `show`, so the total was right and every attribution was wrong.
+        _sec_, steps = self._annotated()
+        self.assertEqual([(s.line, s.fanin)
+                          for s in steps if s.kind == "goal"],
+                         [(6, 1), (8, 1), (10, 1)])
+
+    def test_forward_chain_still_serves_the_next_goal(self):
+        # The `from`/`with` half must not move: a standalone `from` line before
+        # a goal still attaches to it.  (`Shape.thy`'s `standalone` proof is the
+        # fixture for that; this is the guard that the split did not swap them.)
+        self.assertEqual(
+            [s.fanin for s in _annotated("standalone") if s.kind == "goal"],
+            [1, 0])
+
+    def test_a_backward_cite_with_no_open_goal_is_dropped(self):
+        # A `using` line that no goal precedes (the whole proof is
+        # `using x by simp`) has nothing to credit.  It must not fall back to
+        # the forward chain and land on a later goal — undercount, never
+        # misattribute.
+        thy = ('theory T imports Main begin\n'
+               'lemma a1: "True" by simp\n'
+               'lemma r: "True"\n'
+               '  using a1 by simp\n'
+               'end\n')
+        sec = section_from(thy, "T")
+        entry = next(e for e in sec.entries if e.name == "r")
+        steps = shape._scan_steps(sec, entry)
+        shape.annotate_fanin(steps, sec)
+        self.assertEqual([(s.line, s.kind, s.fanin) for s in steps],
+                         [(4, "plumbing", 0)])
 
 
 def _live(name):
