@@ -42,6 +42,9 @@ def parse_yxml(text: str):
     YXML is a flat encoding of an XML tree: `X Y name Y k=v ... X` opens an
     element, `X Y X` closes one, and everything else is body text.  Symbol
     offsets are 1-based, matching every other position Isabelle exports.
+
+    NOTE the text this returns is **not** the theory source — see
+    :func:`source_line_map`.
     """
     spans: list[tuple[str, dict[str, str], int, int]] = []
     stack: list[tuple[str, dict[str, str], int]] = []
@@ -67,6 +70,42 @@ def parse_yxml(text: str):
             out.append(chunk)
             off += len(chunk)          # markup body is already symbol-wise
     return spans, "".join(out)
+
+
+def source_line_map(spans, text: str) -> tuple[list[int], str]:
+    r"""`(line_of, source)` — resolve a markup offset to a **source** line.
+
+    The text `PIDE/markup` encodes is the theory source with Isabelle's
+    *elaborated* antiquotation output spliced into it: `@{term "f"}` in a `text`
+    block is wrapped in an `xml_elem` whose `xml_body` child carries the
+    rendered typing (`\<^bold>'a` and friends).  That text is in the markup and
+    is NOT in the `.thy`, so counting newlines over the whole body gives line
+    numbers for a document that does not exist on disk.
+
+    Measured on `Universal_Turing_Machine.DitherTM`: the markup decodes to
+    21,365 chars where the file is 8,171, and **deleting every `xml_body` region
+    reproduces the file exactly** — byte-for-byte, not approximately.  So the
+    rule is not a heuristic: source = markup minus `xml_body`.
+
+    `line_of[i]` is therefore the source line of markup offset `i`, advanced
+    only by newlines OUTSIDE an `xml_body`.  A `command_span` never begins
+    inside one (a command is source, not rendering), so its start offset maps
+    exactly.
+    """
+    inserted = bytearray(len(text) + 2)
+    for name, _attrs, start, end in spans:
+        if name == "xml_body":
+            for k in range(start, min(end, len(text) + 1)):
+                inserted[k] = 1
+    line_of = [1, 1]
+    src: list[str] = []
+    ln = 1
+    for i, ch in enumerate(text, start=1):
+        if not inserted[i]:
+            src.append(ch)
+            ln += ch == "\n"
+        line_of.append(ln)
+    return line_of, "".join(src)
 
 
 def main() -> None:
@@ -98,12 +137,8 @@ def main() -> None:
     ckinds = Counter(k for _, k, _, _ in cmds)
     print("  kinds: " + ", ".join(f"{k}={c}" for k, c in ckinds.most_common()))
 
-    # Symbol offset -> line, so a span is quotable as a locus.
-    line_of = [1]
-    ln = 1
-    for ch in text:
-        ln += ch == "\n"
-        line_of.append(ln)
+    # Markup offset -> SOURCE line, so a span is quotable as a locus.
+    line_of, _source = source_line_map(spans, text)
 
     print("\n  first 15 commands, as (line span) keyword [kind]:")
     for name, kind, s, e in cmds[:15]:
