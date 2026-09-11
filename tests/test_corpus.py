@@ -23,11 +23,18 @@ CORPUS = os.environ.get("ISABELLE_QUERY_CORPUS")
 
 # Keep the slow oracle comparison to a bounded slice of the corpus.
 _ORACLE_SUBSET = 120
-# Allowed share of caller-edges the fast builder may drop vs the oracle.
+# Allowed share of caller-edges the fast builder may drop vs the reference.
 # The fast builder never *invents* an edge (asserted separately); it may drop
-# a tiny fraction where the per-name oracle over-matches a short symbolic name
-# inside a longer identifier (e.g. `\<gamma>` within `\<gamma>\<^sub>1`) — a
-# spurious oracle hit the token model correctly ignores.
+# a tiny fraction where the per-name reference over-matches a short symbolic
+# name inside a longer identifier (e.g. `\<gamma>` within `\<gamma>\<^sub>1`) —
+# a spurious reference hit the token model correctly ignores.
+#
+# Measured at exactly ONE edge over the 120-file subset
+# (`AOT_model:<toplevel> -> AOT_urrel_\<omega>equiv`, precisely that symbolic
+# over-match), so the ceiling has three orders of magnitude of headroom.  It is
+# a ceiling rather than an equality because the corpus moves; if it is ever
+# approached, `scripts/probe_oracle_drop.py` separates the populations before
+# anyone reaches for the number.
 _MAX_DROP_FRACTION = 0.005
 # Robustness target: the `?` (unparsed-name) rate.  The bulk of the residual
 # is genuinely-anonymous lemmas (`lemma "P"`, `lemma [simp]:`) and nameless
@@ -146,13 +153,24 @@ class Corpus(unittest.TestCase):
         by_name = {e.name for e in sec.entries}
         self.assertIn("beta-C-cor:1", by_name)  # an AOT_theorem (thy_goal)
 
+    def _subset_sections(self):
+        return [cli._parse_one(Path(p).stem, Path(p))
+                for p in self.files[:_ORACLE_SUBSET]]
+
     def test_fast_call_graph_matches_oracle_on_subset(self):
-        subset = self.files[:_ORACLE_SUBSET]
-        secs = [cli._parse_one(Path(p).stem, Path(p)) for p in subset]
-        fast = cli._build_call_graph(secs)
+        secs = self._subset_sections()
+        # `reach="name"`, NOT the shipped default.  The reference implements
+        # query's tokenisation and attribution rules; it has no visibility
+        # filter at all, so comparing it against the default `"closure"`
+        # measures the REACH rule rather than a builder divergence — which is
+        # what this assertion spent a fortnight reporting as one: 504 of the
+        # 505 edges were `[citation-reach]` working exactly as designed, and
+        # the true residual was a single edge [oracle-drop-rate].  The reach
+        # rule has its own pin, immediately below and in test_citation_reach.py.
+        fast = cli._build_call_graph(secs, reach="name")
         ref = brute_force_call_graph(secs)
 
-        # The fast builder must never invent an edge the oracle lacks.
+        # The fast builder must never invent an edge the reference lacks.
         for name, callers in fast.callers.items():
             self.assertLessEqual(
                 callers, ref.callers.get(name, set()),
@@ -165,6 +183,32 @@ class Corpus(unittest.TestCase):
         self.assertLessEqual(
             dropped, max(2, int(total * _MAX_DROP_FRACTION)),
             f"fast builder dropped {dropped}/{total} caller-edges")
+
+    def test_reach_scoping_only_drops_edges(self):
+        """`TheRuleOnlyDrops` at corpus scale.
+
+        Pinning the differential at `reach="name"` above would otherwise leave
+        the SHIPPED default untested here.  `test_citation_reach.py` pins this
+        invariant on a hand-built fixture; this runs it against real `imports`
+        clauses, which is the only place `_Visibility` actually reads — and the
+        subset spans 7 AFP entries, so the closures are genuinely partial.
+        """
+        secs = self._subset_sections()
+
+        def edges(g):
+            return {(c, n) for n, cs in g.callers.items() for c in cs}
+
+        closure = edges(cli._build_call_graph(secs, reach="closure"))
+        by_name = edges(cli._build_call_graph(secs, reach="name"))
+        invented = closure - by_name
+        self.assertFalse(
+            invented,
+            f"reach scoping INVENTED {len(invented)} edges; it may only drop. "
+            f"First few: {sorted(invented)[:5]}")
+        # Not vacuous: over this subset the rule drops ~500 of ~10,900.
+        self.assertTrue(by_name - closure,
+                        "reach scoping dropped nothing — the subset no longer "
+                        "exercises the filter, so the subset check is vacuous")
 
 
 if __name__ == "__main__":

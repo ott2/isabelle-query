@@ -7,19 +7,6 @@ finding it again with `git log --grep`.
 Conventions for changing the tool (the CLI contract, verification habits) live
 in `CONTRIBUTING.md`.
 
-- [ ] `[oracle-drop-rate]` The corpus call-graph test is **RED**:
-      `test_fast_call_graph_matches_oracle_on_subset` reports the fast builder
-      dropping **505 of 10,898** caller-edges against the brute-force reference,
-      where `_MAX_DROP_FRACTION = 0.005` allows 54.
-      Reproduced on `6168b9e` (v0.8.1 + docs) as well as on HEAD, so it predates
-      the `[markup-step-model]` work and is not that change.  The run also takes
-      ~110s where the handoff recorded ~23s, which points at the AFP checkout
-      having moved under the 120-file subset rather than at a code change — but
-      that is a hypothesis, not a measurement.  Establish which before touching
-      the ceiling: a threshold raised to make a test green is worthless, and the
-      test exists precisely because the fast builder must not silently diverge.
-      `ISABELLE_QUERY_CORPUS=~/repos/afp/thys pytest -q tests/test_corpus.py`
-
 - [ ] `[decl-commands]` Four fact-declaring commands are **not declarations**,
       so `query` cannot see them and — worse — they do not bound the previous
       entry either, so the lemma above them swallows their proof.  `DECL_RE`
