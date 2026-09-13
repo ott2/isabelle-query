@@ -131,6 +131,13 @@ def file_locus(labels: dict[Path, str], path: Path) -> str:
     return labels.get(path, path.stem) + path.suffix
 
 
+def theory_locus(labels: dict[Path, str], path: Path) -> str:
+    """The ``instances`` / ``codeqs`` locus for *path*: the label alone, with
+    no suffix restored — a site is reported at a THEORY, the way a caller is,
+    not at a file the way `grep` is."""
+    return labels.get(path, path.stem)
+
+
 def _format_target(entry: Entry) -> str:
     """Format an entry's enclosing locale/class as a scope step: ``context hpk``.
 

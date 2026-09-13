@@ -167,6 +167,7 @@ from isabelle_query.commands import (  # noqa: F401  (re-exported for the facade
     cmd_graph,
     cmd_grep,
     _dot_quote,
+    cmd_instances,
     cmd_largest,
     cmd_lines,
     cmd_methods,
@@ -331,6 +332,7 @@ def _flags_from_ns(ns: argparse.Namespace) -> CmdFlags:
     f.external = getattr(ns, "external", False)
     f.drop_names_upto = getattr(ns, "drop_names_upto", _DROP_NAMES_UPTO)
     f.reach = getattr(ns, "reach", "closure")
+    f.sorts = getattr(ns, "sorts", False)
     return f
 
 
@@ -563,6 +565,20 @@ def _add_names_flag(p: argparse.ArgumentParser,
     # On the search verbs `-n` is *swallowed* rather than left unknown — see
     # `_add_line_number_noop_flag`.
     p.add_argument("--names", action="store_true", help=help_text)
+
+
+def _add_sorts_flag(p: argparse.ArgumentParser) -> None:
+    # The site verbs' one extra column, shared so the wording cannot drift:
+    # WRITTEN text only.  No type is inferred, so a site whose source writes
+    # no sort shows none — a type this tool made up would be the one thing in
+    # the output nobody could check against the source.
+    p.add_argument("--sorts", action="store_true",
+                   help="in the name column, add the sort / arity / signature "
+                        "THE SOURCE WRITES at that site (`prod :: "
+                        "(topological_space, topological_space) "
+                        "topological_space`).  Written text only -- no types "
+                        "are inferred, so a site whose source writes none "
+                        "shows none.")
 
 
 class _IgnoredFlagAction(argparse.Action):
@@ -841,6 +857,10 @@ def _run_unused(ns: argparse.Namespace) -> None:
 
 def _run_methods(ns: argparse.Namespace) -> None:
     cmd_methods(_load_sections(ns), ns.name, _flags_from_ns(ns))
+
+def _run_instances(ns: argparse.Namespace) -> None:
+    flags = _flags_from_ns(ns)
+    _run_each(ns, "name", lambda secs, n: cmd_instances(secs, n, flags))
 
 def _load_shape_config(ns: argparse.Namespace) -> 'shape.CorpusConfig | None':
     """Resolve the optional M3 corpus config for a shape command.
@@ -1399,6 +1419,37 @@ def _build_parser() -> argparse.ArgumentParser:
                         "the ranked tally of every method used")
     _add_mode_flags(p)
     p.set_defaults(func=_run_methods)
+
+    # instances — where a locale / class is instantiated.  A lookup-family
+    # verb (subject list, no PATH positionals) that reports DECLARED SOURCE
+    # sites: the complement of Isar's `print_interps`, which needs a running
+    # prover and shows the processed interpretations, including those an
+    # imported session installed.  No `--reach`: a site is scoped by what its
+    # theory can see, always, since an `interpretation L` in a theory that
+    # cannot see L's declaration interprets a different L.
+    p = sub.add_parser("instances",
+                       help="where a locale or class is instantiated "
+                            "(instantiation / instance / interpretation / "
+                            "sublocale)")
+    _add_subject_list_arg(
+        p, cmd="instances", noun="locale or class name",
+        extra="Reports the DECLARED SOURCE sites, which is the complement of "
+              "Isar's `print_interps`: that needs a running prover and shows "
+              "the processed interpretations, including those an imported "
+              "session installed")
+    _add_count_flag(p, "just print the site count")
+    _add_names_flag(p, "bare `THEORY:LINE` loci, one per line, for piping "
+                       "into `enclosing`")
+    p.add_argument("-r", "--recursive", action="store_true",
+                   help="also the sites of every class or locale that extends "
+                        "NAME, transitively (`class X = NAME + ...`, "
+                        "`subclass`, `instance X \\<subseteq> NAME`, "
+                        "`sublocale`).  Adds a VIA column naming, per row, "
+                        "which of them the site writes -- `nat` instantiates "
+                        "`comm_monoid_diff`, never `ab_semigroup_add` by "
+                        "name.")
+    _add_sorts_flag(p)
+    p.set_defaults(func=_run_instances)
 
     # shape — proof-shape metrics.  Unlike every other verb this is a *nested*
     # subcommand group (`shape summary|steps|lemma|widest|census`): the five
