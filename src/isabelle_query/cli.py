@@ -159,6 +159,7 @@ from isabelle_query.commands import (  # noqa: F401  (re-exported for the facade
     _suggest_theory,
     cmd_callees,
     cmd_callers,
+    cmd_codeqs,
     cmd_defs,
     cmd_deps,
     cmd_enclosing,
@@ -862,6 +863,10 @@ def _run_instances(ns: argparse.Namespace) -> None:
     flags = _flags_from_ns(ns)
     _run_each(ns, "name", lambda secs, n: cmd_instances(secs, n, flags))
 
+def _run_codeqs(ns: argparse.Namespace) -> None:
+    flags = _flags_from_ns(ns)
+    _run_each(ns, "name", lambda secs, n: cmd_codeqs(secs, n, flags))
+
 def _load_shape_config(ns: argparse.Namespace) -> 'shape.CorpusConfig | None':
     """Resolve the optional M3 corpus config for a shape command.
 
@@ -1450,6 +1455,27 @@ def _build_parser() -> argparse.ArgumentParser:
                         "name.")
     _add_sorts_flag(p)
     p.set_defaults(func=_run_instances)
+
+    # codeqs — declared code-equation sites of a constant: the complement of
+    # Isar's `print_codesetup` / `code_thms`, which show the PROCESSED setup.
+    # No `-r` (a constant has no hierarchy to walk) and no `--reach`, as for
+    # `instances`.
+    p = sub.add_parser("codeqs",
+                       help="declared code-equation sites of a constant "
+                            "(`[code]` and kin, plus its own default "
+                            "equations)")
+    _add_subject_list_arg(
+        p, cmd="codeqs", noun="constant name",
+        extra="Reports the DECLARED SOURCE sites, which is the complement of "
+              "Isar's `print_codesetup` / `code_thms`: those need a running "
+              "prover and show the PROCESSED setup -- after preprocessing, "
+              "after `[code del]` has taken effect, and including what an "
+              "imported session declared")
+    _add_count_flag(p, "just print the site count")
+    _add_names_flag(p, "bare `THEORY:LINE` loci, one per line, for piping "
+                       "into `enclosing`")
+    _add_sorts_flag(p)
+    p.set_defaults(func=_run_codeqs)
 
     # shape — proof-shape metrics.  Unlike every other verb this is a *nested*
     # subcommand group (`shape summary|steps|lemma|widest|census`): the five

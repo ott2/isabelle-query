@@ -1438,6 +1438,14 @@ def cmd_instances(sections: list[TheorySection], name: str,
                 transitive=flags.recursive)
 
 
+def cmd_codeqs(sections: list[TheorySection], name: str,
+               flags: 'CmdFlags') -> None:
+    """Declared code-equation sites of a constant."""
+    _with_site_subject(sections, name, _sites.CONSTANT_TAGS, "a constant")
+    rows = [(s, "") for s in _sites.find_code_equations(sections, name)]
+    _emit_sites(sections, rows, name, "code equation", flags)
+
+
 def cmd_callers(sections: list[TheorySection], name: str,
                 flags: 'CmdFlags') -> None:
     """Print proof-body usages of a lemma/definition."""

@@ -40,13 +40,14 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from isabelle_query.graph import site_filter
-from isabelle_query.model import TheorySection
+from isabelle_query.graph import _entry_by_name, site_filter
+from isabelle_query.model import Entry, TheorySection
 from isabelle_query.parsing import (
     ISA_MARKUP,
     QUOTED_NAME_RE,
     RESERVED_NAME_PREFIXES,
     TAG_MAP,
+    _ISA_NAME,
     _LEADING_CMD_RE,
     _NOT_A_TARGET_NAME,
     _SPAN_BOUNDARY_COMMANDS,
@@ -774,3 +775,482 @@ def find_instantiations_transitive(sections: list[TheorySection], name: str
     recognises explicable."""
     return [(site, ", ".join(via)) for site, via in
             _instantiation_sites(sections, [name] + descendants(sections, name))]
+
+
+# ---------------------------------------------------------------------------
+# Code equations
+# ---------------------------------------------------------------------------
+
+# THE ATTRIBUTE SET, and where the line is drawn.  Isabelle's code-equation
+# store (`Pure/Isar/code.ML`) binds one attribute, `code`, with this parser:
+#
+#   [code]            add a (possibly abstract) equation
+#   [code equation]   add an equation
+#   [code prepend]    add an equation, in front
+#   [code nbe]        add an equation for normalisation by evaluation
+#   [code abstract]   add an abstract equation
+#   [code abstype]    add an abstype certificate
+#   [code del]        RETRACT an equation
+#   [code drop: cs]   drop the implementations of constants cs
+#   [code abort]      declare a constant aborting
+#
+# Everything else spelled `code_*` is a DIFFERENT store: `code_unfold`,
+# `code_post` and `code_abbrev` are the code generator's PREPROCESSOR
+# simpsets (`Tools/Code/code_preproc.ML`), which rewrite a term before
+# equations are looked up and are not equations of any constant;
+# `code_pred_intro` / `code_pred_inline` belong to the predicate compiler.
+# Reporting them under "code equations of c" would answer a different
+# question with the same words, so they are excluded, and the token boundary
+# after `code` is what keeps `code_unfold` out.
+#
+# `del` / `drop` / `abort` ARE reported, marked as such: a listing that showed
+# the equations and hid the retraction would be the more misleading of the
+# two, since the retraction is the reason the equation is not in force.
+EQUATION_ATTRS = frozenset({"", "equation", "prepend", "nbe", "abstract",
+                            "abstype"})
+RETRACT_ATTRS = frozenset({"del", "drop", "abort"})
+
+_CODE_ATTR_RE = re.compile(r"^code(?![\w'])\s*([A-Za-z_]*)")
+
+
+@dataclass(frozen=True)
+class CodeAttr:
+    """An attribute occurrence: its spelling for the KIND column (``code``,
+    ``code del``, ...), its argument word, whether it is the ``[[...]]``
+    CONFIG form whose arguments name constants directly, and the extent of
+    its segment in the header text."""
+    spelling: str
+    arg: str
+    config: bool
+    start: int
+    stop: int
+
+
+def code_attrs(live: str, outer: str) -> list[CodeAttr]:
+    """Every ``code``-family attribute in a command header.
+
+    Bracket groups are found on the OUTER view, so a ``[`` inside a term
+    opens nothing; each group is split on its top-level commas, one
+    attribute per segment, and the attribute text is read from live.
+    """
+    out: list[CodeAttr] = []
+    n = len(outer)
+    i = 0
+    while i < n:
+        if outer[i] != "[":
+            i += 1
+            continue
+        config = i + 1 < n and outer[i + 1] == "["
+        start = i + 2 if config else i + 1
+        depth = 1
+        end = -1
+        j = start
+        while j < n and end < 0:
+            if outer[j] == "[":
+                depth += 1
+            elif outer[j] == "]":
+                depth -= 1
+                if depth == 0:
+                    end = j
+            j += 1
+        stop = n if end < 0 else end
+        seg = start
+        d = 0
+        for k in range(start, stop + 1):
+            c = outer[k] if k < stop else ","
+            if c in "([":
+                d += 1
+            elif c in ")]":
+                d -= 1
+            if c == "," and d <= 0:
+                a = min(_skip_space(live, seg), len(live))
+                b = min(k, len(live))
+                if a < b:
+                    m = _CODE_ATTR_RE.match(live[a:b])
+                    if m:
+                        arg = m.group(1)
+                        if arg in EQUATION_ATTRS or arg in RETRACT_ATTRS:
+                            out.append(CodeAttr(("code " + arg).strip(), arg,
+                                                config, a, b))
+                seg = k + 1
+        i = (n if end < 0 else end) + 1
+    return out
+
+
+def dropped_constants(live: str, attr: CodeAttr) -> list[str]:
+    """The constants a ``[[code drop: c1 c2]]`` / ``[code abort: c]``
+    argument list names.  A constant there may carry a type ascription and
+    be quoted (``"open :: real set \\<Rightarrow> bool"``), so the leading
+    name is taken and the ascription dropped."""
+    body = live[min(attr.start, len(live)):min(attr.stop, len(live))]
+    colon = body.find(":")
+    if colon < 0:
+        return []
+    out: list[str] = []
+    pos = _skip_space(body, colon + 1)
+    while pos < len(body):
+        nm = _name_at(body, pos)
+        if not nm:
+            break
+        name, nxt = nm
+        inner = _name_at(name.lstrip(), 0)
+        out.append(inner[0] if inner else name)
+        p = nxt
+        while p < len(body) and not body[p].isspace():
+            p += 1
+        pos = _skip_space(body, p)
+    return out
+
+
+# --- the head of an equation ---
+
+# THE ATTRIBUTION RULE, and its approximation.  A code equation belongs to
+# the constant at the HEAD of its left-hand side, not to every constant it
+# mentions: `lemma [code]: "f x = g x + h x"` is an equation of `f`, and
+# reporting it under `g` and `h` would make the verb useless on any constant
+# that appears in a right-hand side.  So, applied to the source text:
+#
+#   * take the propositions of the statement (the quoted terms and
+#     cartouches; only those after `shows`, when there is a `shows`);
+#   * drop the premises -- everything up to the last top-level
+#     `\<Longrightarrow>` -- since a conditional equation's conclusion is
+#     the equation;
+#   * take the left of the first top-level equality (`=`, `\<equiv>`, `==`,
+#     `\<longleftrightarrow>`);
+#   * the heads are the identifiers in HEAD POSITION there: the first
+#     token, and the first token after each `(`.
+#
+# The second half of that last rule is what makes `[code abstract]` work: an
+# abstract equation reads `Rep_T (f x) = ...`, whose outermost head is the
+# projection and whose subject is `f`.  It over-reports by exactly one case
+# -- `f (g x) y = ...` names `g` too -- which is the direction the rest of
+# the tool's approximations lean: a spurious site, never a missing one.
+# When mixfix notation hides the head symbol (`"xs @ ys = ..."`) no head is
+# found and the site is not reported; the README says so.
+_PROP_RE = re.compile(r'"([^"]*)"|\\<open>(.*?)\\<close>')
+_SHOWS_RE = re.compile(r"(?<![\w'])shows(?![\w'])")
+_BINDER_RE = re.compile(r"^\s*\\<(?:And|forall)>[^.]*\.\s*")
+_META_IMP = ("\\<Longrightarrow>", "==>")
+_HEAD_TOKEN_RE = re.compile(rf"^({_ISA_NAME})")
+
+
+def _top_equality(prop: str) -> int:
+    """The index of the first equality at parenthesis depth 0, or -1.  A
+    `=` that is part of a longer operator (`==>`, `<=`, `~=`) is not one."""
+    depth = 0
+    n = len(prop)
+    for i, c in enumerate(prop):
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif depth == 0:
+            if prop.startswith("\\<equiv>", i):
+                return i
+            if prop.startswith("\\<longleftrightarrow>", i):
+                return i
+            if c == "=":
+                prev = prop[i - 1] if i > 0 else " "
+                nxt = prop[i + 1] if i + 1 < n else " "
+                if prev not in "<>!~:=+-*/^" and nxt not in "=>":
+                    return i
+    return -1
+
+
+def _strip_premises(prop: str) -> str:
+    for imp in _META_IMP:
+        depth = 0
+        cut = -1
+        i = 0
+        n = len(prop)
+        while i < n:
+            c = prop[i]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            elif depth == 0 and prop.startswith(imp, i):
+                cut = i + len(imp)
+            i += 1
+        if cut >= 0:
+            prop = prop[cut:]
+    m = _BINDER_RE.match(prop)
+    return prop[m.end():] if m else prop
+
+
+def _head_identifiers(lhs: str) -> list[str]:
+    out: list[str] = []
+
+    def take(at: int) -> None:
+        pos = _skip_space(lhs, at)
+        if pos < len(lhs):
+            m = _HEAD_TOKEN_RE.match(lhs[pos:])
+            if m:
+                out.append(m.group(1))
+
+    take(0)
+    for i, c in enumerate(lhs):
+        if c == "(":
+            take(i + 1)
+    return out
+
+
+def equation_heads(statement: str) -> list[str]:
+    """The constants at the head of each proposition's left-hand side."""
+    m = _SHOWS_RE.search(statement)
+    body = statement[m.end():] if m else statement
+    out: list[str] = []
+    for pm in _PROP_RE.finditer(body):
+        prop = pm.group(1) if pm.group(1) is not None else pm.group(2)
+        if not prop:
+            continue
+        concl = _strip_premises(prop)
+        eq = _top_equality(concl)
+        for h in _head_identifiers(concl[:eq] if eq >= 0 else concl):
+            if h not in out:
+                out.append(h)
+    return out
+
+
+# --- fact names, and the constant behind one ---
+
+_FACT_NAME_RE = re.compile(
+    rf"(?<![\w'.])({_ISA_NAME})(?:\.(?:{_ISA_NAME}))*")
+
+
+def cited_fact_names(outer: str, start: int = 0) -> list[str]:
+    """The fact names a ``declare`` / ``lemmas`` command cites, outside its
+    attribute brackets.  ``lemmas foo [code] = bar baz`` names ``foo``,
+    ``bar`` and ``baz``, and all three are read: which of them carries the
+    equation is a question about the theorem, and the site is reported
+    whichever way round it is written."""
+    masked = list(outer)
+    for i in range(min(start, len(masked))):
+        masked[i] = " "
+    depth = 0
+    for i in range(start, len(masked)):
+        c = masked[i]
+        if c == "[":
+            depth += 1
+            masked[i] = " "
+        elif c == "]":
+            if depth > 0:
+                depth -= 1
+            masked[i] = " "
+        elif depth > 0:
+            masked[i] = " "
+    return [m.group(0) for m in _FACT_NAME_RE.finditer("".join(masked))]
+
+
+# Derived spellings Isabelle mints from a constant's own declaration; citing
+# one of them IS citing the constant.  The dotted family is open-ended
+# (`f.simps`, `f.code`, `f.psimps`, `f.induct`), so the test is the prefix
+# rather than a list of suffixes.
+_UNDERSCORE_SUFFIXES = ("_def", "_defs", "_code")
+
+
+def _spells(token: str, subject: str) -> bool:
+    return (token == subject or token.startswith(subject + ".")
+            or any(token == subject + s for s in _UNDERSCORE_SUFFIXES))
+
+
+# --- the signature a declaration writes ---
+
+# `c :: T` in a declaration header, and NOTHING inferred: `--sorts` reports
+# what the author typed, so a `definition` that leaves the type to Isabelle
+# shows none.  The `::` must be visible in OUTER, which is what keeps the
+# `::` of `lemma foo: "f :: nat \<Rightarrow> bool"` -- inside a term -- from
+# being read as the declaration's own; the NAME in front of it is read from
+# LIVE, where a quoted declaration name (`definition "open" :: ...`) still
+# stands.
+_SIG_RE = re.compile(r'(?:"([^"]+)"|(' + _USE_NAME + r"))\s*::")
+
+
+def _type_text(live: str, outer: str, from0: int) -> str:
+    start = _skip_space(live, from0)
+    if start >= len(live):
+        return ""
+    if live[start] == '"':
+        e = live.find('"', start + 1)
+        return "" if e < 0 else _squash(live[start + 1:e])
+    if live.startswith("\\<open>", start):
+        e = _balanced_end(live, "\\<open>", "\\<close>", start=start)
+        return "" if e < 0 else _squash(live[start + 7:e - 8])
+    # Unquoted, so it ends where the header does -- `where`, a proof, or the
+    # end of what was read.
+    rest_outer = outer[start:]
+    m = _HEADER_STOP_RE.search(rest_outer)
+    cut = m.start() if m else len(rest_outer)
+    return _squash(live[start:start + cut])
+
+
+def written_type(live: str, outer: str, name: str) -> str:
+    """The signature the declaration of ``name`` writes in this header, or
+    ``""`` when it writes none."""
+    for m in _SIG_RE.finditer(live):
+        got = m.group(1) if m.group(1) is not None else m.group(2)
+        sep = m.end() - 2
+        if got == name and sep >= 0 and outer[sep:sep + 2] == "::":
+            return _type_text(live, outer, m.end())
+    return ""
+
+
+# --- the scan ---
+
+def find_code_equations(sections: list[TheorySection], name: str
+                        ) -> list[Site]:
+    """Every code-equation site of ``name``.  Three producers, and the KIND
+    column says which:
+
+    ``default``
+        the constant's own ``definition`` / ``fun``, whose equations are
+        registered with no attribute written -- the site a reader most
+        often wants and the one a purely attribute-driven scan would miss;
+    ``[code ...]``
+        a declaration carrying a code attribute whose statement's equation
+        head is the constant;
+    ``[code ...]``
+        a ``declare`` / ``lemmas`` that attaches one to a named fact of the
+        constant, or a ``[[code drop:]]`` naming it outright.
+    """
+    by_name = _entry_by_name(sections)
+    # The SECTION each name resolves to, first-wins in exactly the order
+    # `_entry_by_name` uses, so the two agree about which declaration is
+    # meant.  A theory name would not: it is unique in a session and not in
+    # a corpus [name-is-not-identity].
+    sec_by_name: dict[str, TheorySection] = {}
+    for s in sections:
+        for e in s.entries:
+            sec_by_name.setdefault(e.name, s)
+
+    def statement(live: list[str], e: Entry) -> str:
+        # The LIVE view: a superseded equation left behind in a `(* ... *)`
+        # note must not supply a head.
+        stop = min(max(e.decl_end_line, e.thy_line), len(live))
+        if e.thy_line > stop:
+            return ""
+        return "\n".join(live[e.thy_line - 1:stop])
+
+    def fact_denotes(token: str) -> bool:
+        # A fact name resolves to the constant when it SPELLS it, or when
+        # the entry it names is a lemma whose own equation head is the
+        # constant -- `declare card_set [code]` for
+        # `card_set: "card (set xs) = ..."`.
+        if _spells(token, name):
+            return True
+        got = by_name.get(token)
+        if got is None or got[1].tag not in ("LEMMA", "THEOREM"):
+            return False
+        sec = sec_by_name.get(token)
+        live = sec.live_source() if sec is not None else []
+        return name in equation_heads(statement(live, got[1]))
+
+    # Same visibility rule as `instances` and the citation scan: a `[code]`
+    # equation for a constant this theory cannot see is an equation for
+    # another constant of that name.
+    reachable = site_filter(sections, name)
+
+    out: list[Site] = []
+    for sec in sections:
+        if not reachable(sec.theory):
+            continue
+        live = sec.live_source()
+        outer = sec.outer_source()
+        raw = sec.source()
+        found: list[Site] = []
+
+        # 1. Declarations: the entry grammar already knows where a statement
+        #    ends (`Entry.decl_end_line`), so there is no second scan for it.
+        for e in sec.entries:
+            if e.thy_line <= 0:
+                continue
+            stop = min(max(e.decl_end_line, e.thy_line), len(live))
+            if e.thy_line > stop:
+                continue
+            entry_name = e.name or UNNAMED
+            attributed = False
+            # No attribute can be present without the word, and the word is
+            # rare: one substring test per line keeps a whole-project scan
+            # cheap.
+            if any("code" in live[k - 1] for k in range(e.thy_line, stop + 1)):
+                head_live = "\n".join(live[e.thy_line - 1:stop])
+                head_outer = "\n".join(outer[e.thy_line - 1:stop])
+                attrs = code_attrs(head_live, head_outer)
+                if attrs:
+                    # An attribute on the constant's OWN declaration
+                    # (`definition [code del] ...`) is about that constant,
+                    # whatever shape its defining equation is written in.
+                    subject_here = (e.tag in CONSTANT_TAGS
+                                    and (e.name == name
+                                         or name in e.bound_names))
+                    heads = [] if subject_here else equation_heads(head_live)
+                    for attr in attrs:
+                        if attr.config:
+                            hit = any(denotes(c, name) for c in
+                                      dropped_constants(head_live, attr))
+                        else:
+                            hit = subject_here or name in heads
+                        if hit:
+                            attributed = True
+                            found.append(Site(
+                                sec.theory, sec.path, e.thy_line,
+                                f"[{attr.spelling}]",
+                                raw[e.thy_line - 1].rstrip(), entry_name,
+                                written_type(head_live, head_outer, e.name)))
+            # 2. The implicit default equations of the constant's own
+            #    declaration -- unless the declaration ITSELF carries a code
+            #    attribute (`definition thrice ... where [code]: "..."`).
+            #    There is one equation there, and printing the same line
+            #    twice, once as `default` and once as `[code]`, would say
+            #    there are two.
+            if (not attributed and e.tag in DEFAULT_CODE_TAGS
+                    and (e.name == name or name in e.bound_names)):
+                head_live = "\n".join(live[e.thy_line - 1:stop])
+                head_outer = "\n".join(outer[e.thy_line - 1:stop])
+                found.append(Site(
+                    sec.theory, sec.path, e.thy_line, "default",
+                    raw[e.thy_line - 1].rstrip(), entry_name,
+                    written_type(head_live, head_outer, e.name)))
+
+        # 3. `declare` / `lemmas`, which declare no entry and so are
+        #    invisible to the loop above.
+        for i in range(1, len(outer) + 1):
+            stripped = outer[i - 1].lstrip()
+            if not stripped.startswith(("declare ", "lemmas ",
+                                        "declare[", "lemmas[")):
+                continue
+            head_live, head_outer = _header_at(live, outer, i)
+            # Past the command word: `declare` is not one of the facts it
+            # declares an attribute for.
+            at = (len(outer[i - 1]) - len(stripped)
+                  + (7 if stripped.startswith("declare") else 6))
+            if "code" not in head_live:
+                continue
+            for attr in code_attrs(head_live, head_outer):
+                if attr.config:
+                    dropped = [c for c in dropped_constants(head_live, attr)
+                               if denotes(c, name)]
+                    cited: list[str] = []
+                else:
+                    dropped = []
+                    cited = cited_fact_names(head_outer, at)
+                if dropped or any(fact_denotes(t) for t in cited):
+                    # The BINDING LABEL: the fact the attribute is attached
+                    # to, which is the first name the command writes --
+                    # `card_set` in `declare card_set [code]`, `eq_fold` in
+                    # `lemmas eq_fold [code] = ...`.  The later names on a
+                    # `lemmas` right-hand side are what the label is bound
+                    # TO, and a row named after one of them would say the
+                    # site is somewhere it is not.  A `[[code drop: c]]`
+                    # binds no fact and is named after the constant it
+                    # drops.
+                    if attr.config:
+                        label = dropped[0]
+                    else:
+                        label = cited[0] if cited else UNNAMED
+                    found.append(Site(sec.theory, sec.path, i,
+                                      f"[{attr.spelling}]",
+                                      raw[i - 1].rstrip(), label))
+        found.sort(key=lambda s: s.line)
+        out.extend(found)
+    return out
