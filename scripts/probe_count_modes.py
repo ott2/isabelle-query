@@ -58,8 +58,15 @@ CASES = [
     ("callees", ["callees", "-c", "zzz"], "unknown"),
     ("refs", ["refs", "-c", "zzz"], "unknown"),
     ("methods", ["methods", "-c", "zzz"], "unknown"),
+    # The site verbs need a declared subject before they can have sites: a
+    # locale from an imported session would otherwise look exactly like one
+    # nobody instantiates.
+    ("instances", ["instances", "-c", "zzz"], "unknown"),
+    ("codeqs", ["codeqs", "-c", "zzz"], "unknown"),
     ("find (hit)", ["find", "-c", "d"], "control"),
     ("methods (hit)", ["methods", "-c", "simp"], "control"),
+    # `definition d` registers its own default code equation.
+    ("codeqs (hit)", ["codeqs", "-c", "d"], "control"),
 ]
 
 

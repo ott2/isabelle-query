@@ -34,10 +34,12 @@ query refs <theory>        # what a theory cites, by owning theory (citation-lev
 query graph [citation|imports]  # the whole graph as JSON (-f dot for Graphviz)
 query sorry                # outstanding sorry's
 query unused               # dead-code / unused-entry analysis
+query instances <name> [-r]  # where a locale/class is instantiated; -r walks the hierarchy
+query codeqs <name>        # declared code-equation sites of a constant
 query shape <view>         # proof-shape metrics (summary|steps|lemma|widest|census)
 ```
 
-Every subcommand takes `-h`; `query -h` lists all 20.
+Every subcommand takes `-h`; `query -h` lists all 22.
 
 ## Examples
 
@@ -79,6 +81,28 @@ theories plus the closure of their in-entry imports.
 See **[SCANNING.md](SCANNING.md)** for the details: locale scope, method names
 that collide with fact names, corpus aggregation, and the prose view.
 
+### Instantiation and code-equation sites
+
+`instances` and `codeqs` report **declared source sites**, not the processed
+setup a prover's `print_interps` / `print_codesetup` shows. Rows have the form
+`LOCUS NAME KIND source`; a site whose source writes no name shows `?`.
+`--sorts` adds only the sort, arity or signature written at the site, never an
+inferred type.
+
+`instances -r` also lists the sites of everything that **extends** the subject —
+`class X = NAME + …`, `locale X = … NAME …`, `subclass`, `instance X ⊆ NAME`,
+`sublocale` — transitively, and adds a `VIA` column naming which of them each
+row writes. `nat` instantiates `comm_monoid_diff`, never `ab_semigroup_add` by
+name, so it appears only under `-r`. Without the flag the listing is the direct
+sites alone.
+
+**`codeqs` under-reports when mixfix notation hides the statement's head
+symbol.** Check source with `grep` if an answer looks short. Neither verb
+separates same-named declarations that are both visible from one theory: a
+site is attributed to a declaration in that theory or its transitive imports
+within the scanned project, and declarations that live only in a heap are not
+discovered.
+
 ## Proof-shape metrics
 
 `query shape` measures the shape of individual proof steps — how big a step is,
@@ -115,6 +139,11 @@ query: 'zzz' is not in the entry index
 $ echo $?
 1
 ```
+
+`instances` and `codeqs` exit `1` for a subject that is not a declared locale
+or class, respectively constant — a typo and a locale from an imported session
+would otherwise look exactly like one nobody instantiates — and `0` for a
+declared subject with no sites.
 
 `141` is not promised for *every* `| head`. When the whole answer fits the pipe
 buffer no write ever fails and the status is `0` — the same as `seq 10 | head`,

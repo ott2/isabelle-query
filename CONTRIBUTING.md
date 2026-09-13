@@ -36,7 +36,8 @@ positional decides which one it is.
   PATH positionals**: "who calls X" is corpus-global, so scope with the
   global `-R/--root` and narrow with *semantic* flags (`--external`,
   `-r/--recursive`), never a file subset. Members: `show`, `callers`,
-  `callees`, `deps`, `uses`, `theory`, `defs`, `outline`, `methods`.
+  `callees`, `deps`, `uses`, `theory`, `defs`, `outline`, `methods`,
+  `instances`, `codeqs`.
 - **search** (grep/rg: `grep PAT PATH...`) — the primary positional is a
   pattern (or nothing), and **paths are the trailing positionals**, added
   with `_add_path_files_arg` (resolved by `_load_sections`). Members:
@@ -64,6 +65,25 @@ for a token, so zero mentions is truthful whether or not the name is declared,
 while `callees` needs the entry to exist before it can have callees. Different
 questions, different empties. `scripts/probe_count_modes.py` checks the whole
 family at once — add a verb there when you add one here.
+
+**The two site verbs sit in the lookup family, and their exit contract is the
+reason they were allowed to exist.** `instances` and `codeqs` take a subject
+list and no PATH positionals. Neither has a prover-side oracle to compare
+against, so they carry the discipline an oracle would otherwise have supplied:
+
+- A subject that is **not a locale/class** (resp. **not a constant**) declared
+  in the project exits `1` with a diagnostic on stderr — never `0` with zero
+  sites. "No instantiations of `foo`" and "`foo` is not a locale" are different
+  answers and a script must be able to tell them apart. This is the same
+  never-empty-success rule one level in.
+- A subject that IS declared and has no sites exits `0`. That is an honest
+  zero.
+- Their scope is stated in `README.md`, not buried: declared source sites only,
+  the complement of `print_interps` / `print_codesetup`; and `codeqs`
+  under-reports where mixfix notation hides the head symbol. A verb that leans
+  the unsafe way says so where the user reads about it.
+
+A third verb of this kind would need the same three things before it ships.
 
 **A user-typed pattern goes through `commands._user_pattern`, never straight to
 `re.compile`.** This is the same rule one level down: a pattern that cannot
@@ -109,6 +129,7 @@ inline:
 | `_add_context_flag` | `-U/--context` — one short flag everywhere, default per-command |
 | `_add_drop_names_flag` | `--drop-names-upto` |
 | `_add_line_number_noop_flag` | `-n/--line-number` — accepted and ignored on the search verbs |
+| `_add_sorts_flag` | `--sorts` — the site verbs' written sort / arity / signature column |
 
 The **program name is not a literal**. The tool installs under two console
 script names (`query`, `isabelle-query`) and reports whichever was invoked, via

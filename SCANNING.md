@@ -79,7 +79,12 @@ Isabelle binds more than one name per command, and each of them is citable:
 
 `show`, `find`, `callers` and `callees` all resolve these to the declaration
 that binds them, and say how — `'termi_z' is an introduction rule of terminate`,
-`'ip' is a field of state`. They are deliberately **not** separate entries: one
+`'ip' is a field of state`. `instances` and `codeqs` accept them as subjects the
+same way, so `codeqs Cons` asks about the constructor and not about the
+`datatype` that binds it. And for the reachability rule below they **are**
+declarations: a constructor is declared where its datatype is, and a theory
+that cannot see the datatype cannot be writing that constructor. They are
+deliberately **not** separate entries: one
 command has one span, so counting `fun f and g and h` three times would
 triple-count it under `largest` and give `enclosing` three owners for each of
 its lines.
@@ -160,8 +165,20 @@ that spells a theory `"Simple/Reach"` reach each other. For the same reason,
 where a corpus declares one theory name twice the closure takes the **union**
 of both sections' imports rather than picking one.
 
+For the single-name scans — `callers`, `instances`, `codeqs` — the declared set
+is the entries **and the names an entry binds** (the table above). Isabelle
+binds `Bar` in the theory that writes `datatype colour = Bar | Baz`, and a
+theory that does not import it cannot write that `Bar` either; so `callers Bar`
+is scoped to the theories that can see the datatype, exactly as `callers colour`
+is. The bulk citation graph (`callees`, `refs`, `unused`, `graph citation`)
+keys on entries only, since it has no bound-name nodes, so its totals do not
+move.
+
 `--reach name` restores name-only matching, on `callers`, `callees`, `unused`,
-`graph` and `refs` — every verb the scoping moves.
+`graph` and `refs` — every verb the scoping moves. `instances` and `codeqs`
+have no such switch: an `interpretation L` in a theory that cannot see `L`'s
+declaration interprets a different `L`, and there is no name-only answer worth
+offering.
 
 ## Locale scope
 
@@ -194,6 +211,26 @@ command keyword is still matched at outer-syntax position.
 An opener that carries no name is left unnamed rather than guessed at: `context`
 alone opens an anonymous context whose elements follow on later lines, and 430
 of the 1,247 `context` blocks over 120 AFP entries are of that kind.
+
+### Extending a target is not instantiating it
+
+`instances L` lists the lines that supply types or terms to `L` — the
+`instantiation` / `instance` arities, the `interpretation` family and
+`sublocale`. Extending `L` is a different relation, so `class X = L + …`,
+`locale X = … L …`, `subclass L`, `instance X ⊆ L` and `sublocale X ⊆ L` are
+not sites; they are the **edges** `instances L -r` walks. The closure is taken
+over live text only, by breadth-first search from `L` with a visited set, and
+each transitive row carries the member of the closure it actually writes in its
+`VIA` cell.
+
+The heads of an extension are read exactly as any other use site: the text
+after the `=` and before the first context element (`fixes`, `constrains`,
+`assumes`, `notes`, `defines`, `for`, `begin`), split on top-level `+` with
+qualifiers stripped, so `class both = side + leaf` is two edges and a `+` inside
+a term is none. An edge counts only where the extending section can see a
+declaration of that name, the same import-visibility condition a site obeys —
+and with the same limit: two projects that each declare a `ring` are not told
+apart by name, so a closure can be wider than the one Isabelle would compute.
 
 ## What counts as the project
 
@@ -241,7 +278,8 @@ Both spellings resolve: `enclosing Virtual_Substitution/QE:3495` answers about
 that theory, and a bare `QE:3495` still works when the name is unique. `grep`
 and `sorry` report a **file** rather than a theory, so they qualify the same way
 with the suffix kept (`alpha/Examples.thy:12`), which leaves a non-`.thy`
-positional's own filename intact.
+positional's own filename intact. `instances` and `codeqs` report a theory, and
+so print the label bare: a site is reported where a caller is.
 
 The same collision decides which entry owns a line, which lines are prose, and
 which are declaration sites — all three are answered per *file*, so two
