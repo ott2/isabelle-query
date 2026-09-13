@@ -652,7 +652,8 @@ def extends_edges(sections: list[TheorySection]) -> list[Extends]:
         outer = sec.outer_source()
 
         for e in sec.entries:
-            if e.tag in LOCALE_TAGS and e.name and e.name != UNNAMED:
+            if (e.tag in LOCALE_TAGS and e.name and e.name != UNNAMED
+                    and e.thy_line > 0):
                 head_live, head_outer = _header_at(live, outer, e.thy_line)
                 for parent in extends_heads(head_live, head_outer):
                     out.append(Extends(e.name, parent, sec.theory))

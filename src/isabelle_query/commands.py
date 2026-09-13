@@ -1379,10 +1379,10 @@ def _emit_sites(sections: list[TheorySection],
     """One renderer for both site verbs: LOCUS, NAME, KIND, [VIA,] source.
 
     The name sits exactly where `callers` and `methods` put their owning
-    entry, and the locus stays FIRST, which is what keeps
-    `instances L | awk '{print $1}' | xargs query enclosing` working and
-    what `--names` prints on its own: for a SITE list the identity of a hit
-    IS its locus, and `theory:line` is the tool's own span grammar.
+    entry, and the locus stays FIRST, which is what lets the first field of
+    every row be cut out with `awk '{print $1}'` and handed to `enclosing`,
+    and what `--names` prints on its own: for a SITE list the identity of a
+    hit IS its locus, and `theory:line` is the tool's own span grammar.
 
     The locus is the qualified, suffix-free label (`render.theory_locus` of
     the site's own path) computed from one label map per run: a site is

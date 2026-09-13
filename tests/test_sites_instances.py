@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 from isabelle_query import cli, commands, sites  # noqa: E402
 from isabelle_query.model import CmdFlags  # noqa: E402
-from isabelle_query.parsing import _balanced_end  # noqa: E402
+from support import blank_terms  # noqa: E402
 
 SITES_FIX = r'''theory Sites_Fix
   imports Main
@@ -219,30 +219,6 @@ end
 
 ROOT = ("session Fix = HOL +\n  theories\n    Sites_Fix\n    Names_Fix\n"
         "    Closure_Fix\n")
-
-
-def blank_terms(s):
-    r"""The outer view of a one-line header, simulated: every `"..."` term and
-    `\<open>...\<close>` cartouche blanked to spaces, which is what
-    `TheorySection.outer_source` does to the same characters."""
-    out = []
-    i = 0
-    quoted = False
-    while i < len(s):
-        c = s[i]
-        if c == '"':
-            quoted = not quoted
-            out.append(" ")
-            i += 1
-        elif not quoted and s.startswith("\\<open>", i):
-            e = _balanced_end(s, "\\<open>", "\\<close>", start=i)
-            stop = len(s) if e < 0 else e
-            out.append(" " * (stop - i))
-            i = stop
-        else:
-            out.append(" " if quoted else c)
-            i += 1
-    return "".join(out)
 
 
 def heads(text):

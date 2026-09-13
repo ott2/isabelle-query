@@ -20,6 +20,7 @@ round-trip through `enclosing`.
 
 import io
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -29,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 from isabelle_query import cli, commands, sites  # noqa: E402
 from isabelle_query.model import CmdFlags  # noqa: E402
-from test_sites_instances import blank_terms  # noqa: E402
+from support import blank_terms  # noqa: E402
 
 CODE_FIX = r'''theory Code_Fix
   imports Main
@@ -371,8 +372,11 @@ class TheCommand(CodeFixture):
     def test_sorts_only_where_a_signature_is_written(self):
         rows = self.codeqs("twice", sorts=True).splitlines()[2:]
         self.assertEqual(len(rows), 4)
-        self.assertEqual(sum(1 for r in rows if " :: nat" in r), 1)
-        self.assertIn("  twice :: nat \\<Rightarrow> nat  ", rows[0])
+        # The NAME cell, not the whole row: the source cell of the
+        # definition row writes a `::` of its own.
+        cells = [re.split(r"\s{2,}", r.strip())[1] for r in rows]
+        self.assertEqual(cells, ["twice :: nat \\<Rightarrow> nat",
+                                 "twice_alt", "twice_lemmas", "twice"])
 
     def test_a_known_constant_with_no_equations(self):
         # The binding note first, in every mode, then the honest zero.
