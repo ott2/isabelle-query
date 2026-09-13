@@ -912,7 +912,12 @@ def _find_callers(sections: list[TheorySection], name: str,
     text_ranges = _noise_ranges(sections)
     # Read late: the namespace table is bound by the CLI after import.
     shadowed = name in _graph._NON_CITATION
-    vis = _graph._Visibility(sections, reach)
+    # A name an entry BINDS is a declaration of it here [bound-name-reach]:
+    # `callers Bar` for a constructor is scoped to the theories that can see
+    # the datatype, as it is for an entry.  The bulk graph does not do this
+    # (it has no bound-name nodes), so `callers -r` / `callees` / `refs` /
+    # `unused` totals are untouched.
+    admits = _graph.site_filter(sections, name, reach)
 
     results: list[tuple[TheorySection, int, str]] = []
     for sec in sections:
@@ -922,7 +927,7 @@ def _find_callers(sections: list[TheorySection], name: str,
             continue
         # Whole-theory visibility, tested once rather than per line: the
         # question is about the theory, not the site.
-        if not vis.sees(sec.theory, name):
+        if not admits(sec.theory):
             continue
         # Decide on the redacted view, report the raw one: a mention inside a
         # comment / `\<^cancel>` / inline ML body is not a use even when live
