@@ -24,6 +24,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -704,6 +705,58 @@ class TheHierarchy(SitesFixture):
         self.assertEqual([s.line for s, _v in rows].count(26), 1)
         self.assertEqual({v for _s, v in rows}, {"magma"})
         self.assertEqual(self.trans("semi"), [])
+
+
+class TheClosureIsBuiltOnce(SitesFixture):
+    """The cost of `-r` scales with the corpus, not with the hierarchy.
+
+    Over the distribution's `src/HOL`, `instances ab_semigroup_add -r` walks a
+    hierarchy of some 430 classes.  A fresh visibility per name re-indexed
+    every entry and re-read every theory header once per name, and the
+    single-slot closure cache thrashed as the edge walk alternated theories:
+    90 s against 6 s for the direct form.  One shared visibility per request,
+    with closures memoised per theory, is the fix, and these counts are what
+    pin it.
+    """
+
+    def test_each_header_is_read_at_most_once(self):
+        from isabelle_query import graph
+        calls = []
+        real = graph.parse_thy_imports
+
+        def counting(path):
+            calls.append(path)
+            return real(path)
+
+        with unittest.mock.patch.object(graph, "parse_thy_imports", counting):
+            rows = sites.find_instantiations_transitive(self.sections, "base")
+        self.assertEqual(len(rows), 6)
+        self.assertLessEqual(len(calls), len(self.sections))
+
+    def test_one_visibility_per_request(self):
+        from isabelle_query import graph
+        built = []
+        real_init = graph._Visibility.__init__
+
+        def counting(self_, *args, **kwargs):
+            built.append(kwargs)
+            real_init(self_, *args, **kwargs)
+
+        with unittest.mock.patch.object(graph._Visibility, "__init__",
+                                        counting):
+            rows = sites.find_instantiations_transitive(self.sections, "hasb")
+        self.assertEqual(len(rows), 8)
+        self.assertEqual(len(built), 1)
+        self.assertTrue(built[0].get("bound_names"))
+
+    def test_a_name_declared_nowhere_builds_no_closure(self):
+        from isabelle_query import graph
+        vis = graph._Visibility(self.sections, bound_names=True,
+                                memo_closures=True)
+        admits = graph.site_filter(self.sections, "nothing_declares_this",
+                                   vis=vis)
+        self.assertTrue(admits("Closure_Fix"))
+        self.assertEqual(vis._closures, {})
 
 
 class TheTransitiveCommand(SitesFixture):

@@ -529,8 +529,16 @@ class _Visibility:
     """
 
     def __init__(self, sections: list[TheorySection], mode: str = "closure",
-                 *, bound_names: bool = False):
+                 *, bound_names: bool = False, memo_closures: bool = False):
         self.mode = mode
+        # One closure at a time (the class docstring), unless the caller says
+        # its walk ALTERNATES theories: the hierarchy walk behind
+        # `instances -r` asks about the theory each edge is written in, in
+        # edge order, and a single slot then recomputes the same closure once
+        # per edge.  A per-theory dict is bounded by the corpus and lives no
+        # longer than the request that asked for it.
+        self._closures: dict[str, frozenset[str] | None] | None = (
+            {} if memo_closures else None)
         self.by_theory = _sections_by_theory(sections)
         self._leaf = _leaf_index(self.by_theory)
         # theory -> EVERY section of that name, not the last-wins one.  A
@@ -599,6 +607,8 @@ class _Visibility:
     def closure(self, theory: str) -> frozenset[str] | None:
         """``{theory} | its transitive in-project imports``, or None if any
         header on the walk could not be read — see the class docstring."""
+        if self._closures is not None and theory in self._closures:
+            return self._closures[theory]
         if self._closure is not None and self._closure[0] == theory:
             return self._closure[1]
         unknown = False
@@ -614,6 +624,8 @@ class _Visibility:
         depths = _bfs_depths(children, [theory], seed_depth=-1)
         reach = None if unknown else frozenset(depths) | {theory}
         self._closure = (theory, reach)
+        if self._closures is not None:
+            self._closures[theory] = reach
         return reach
 
     def sees(self, theory: str, name: str) -> bool:
@@ -632,7 +644,8 @@ class _Visibility:
 
 
 def site_filter(sections: list[TheorySection], name: str,
-                reach: str = "closure") -> Callable[[str], bool]:
+                reach: str = "closure", *,
+                vis: "_Visibility | None" = None) -> Callable[[str], bool]:
     """Which theories a single-name scan may report a hit for ``name`` in.
 
     The per-theory predicate behind `callers`, `instances` and `codeqs`: the
@@ -647,9 +660,19 @@ def site_filter(sections: list[TheorySection], name: str,
     is the difference between a cheap verb and an expensive one: building a
     closure reads theory headers, and `callers <some token>` on a word the
     project never declares needs none of it.
+
+    A caller asking about MANY names in one request (`instances -r`, over a
+    hierarchy) passes one ``vis`` built with ``bound_names=True`` and shares
+    it: a fresh instance per name re-indexes every entry and re-reads every
+    theory header through its own imports memo, which over the distribution's
+    `src/HOL` turned a 6 s request into 90 s.
     """
     if reach != "closure":
         return lambda theory: True
+    if vis is not None:
+        if name not in vis.declared_in:
+            return lambda theory: True
+        return lambda theory: vis.sees(theory, name)
     declared = False
     for sec in sections:
         for e in sec.entries:

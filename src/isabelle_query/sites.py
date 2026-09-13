@@ -40,7 +40,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from isabelle_query.graph import _entry_by_name, site_filter
+from isabelle_query.graph import _Visibility, _entry_by_name, site_filter
 from isabelle_query.model import Entry, TheorySection
 from isabelle_query.parsing import (
     ISA_MARKUP,
@@ -472,7 +472,8 @@ def _enclosing_lookup(sec: TheorySection, live: list[str],
     return lookup
 
 
-def _instantiation_sites(sections: list[TheorySection], names: list[str]
+def _instantiation_sites(sections: list[TheorySection], names: list[str],
+                         vis: _Visibility | None = None
                          ) -> list[tuple[Site, list[str]]]:
     """Every instantiation site of ANY of ``names``, in section-load order,
     each paired with the names it instantiates IN WRITTEN ORDER.
@@ -489,7 +490,7 @@ def _instantiation_sites(sections: list[TheorySection], names: list[str]
     # DIFFERENT locale of the same name.  Same necessary condition the
     # citation scan applies, and per NAME: a descendant declared elsewhere in
     # the corpus has its own visibility, not its ancestor's.
-    filters = [(n, site_filter(sections, n)) for n in names]
+    filters = [(n, site_filter(sections, n, vis=vis)) for n in names]
     for sec in sections:
         here = [n for n, admits in filters if admits(sec.theory)]
         if not here:
@@ -734,7 +735,15 @@ def extenders(sections: list[TheorySection], name: str) -> list[str]:
                          name)
 
 
-def descendants(sections: list[TheorySection], name: str) -> list[str]:
+def _site_visibility(sections: list[TheorySection]) -> _Visibility:
+    """The one visibility a many-name request shares: bound names count as
+    declarations, and closures are memoised per theory because the edge
+    walk asks about theories in edge order, not section order."""
+    return _Visibility(sections, bound_names=True, memo_closures=True)
+
+
+def descendants(sections: list[TheorySection], name: str,
+                vis: _Visibility | None = None) -> list[str]:
     """Everything that IS a ``name``, transitively.
 
     Breadth-first over the edge relation, ``name`` itself excluded (it is
@@ -745,11 +754,13 @@ def descendants(sections: list[TheorySection], name: str) -> list[str]:
     elsewhere in the corpus has its own visibility, not its ancestor's.
     """
     edges = extends_edges(sections)
+    if vis is None:
+        vis = _site_visibility(sections)
     filters: dict = {}
 
     def admits(n: str):
         if n not in filters:
-            filters[n] = site_filter(sections, n)
+            filters[n] = site_filter(sections, n, vis=vis)
         return filters[n]
 
     seen = {name}
@@ -773,8 +784,13 @@ def find_instantiations_transitive(sections: list[TheorySection], name: str
     the closure members the line actually writes, comma-joined — which is
     what makes a row naming neither the subject nor anything the reader
     recognises explicable."""
+    # One visibility for the whole request -- the hierarchy walk and the site
+    # scan ask about hundreds of names over one corpus, and each is a
+    # question about the same import closures.
+    vis = _site_visibility(sections)
+    names = [name] + descendants(sections, name, vis)
     return [(site, ", ".join(via)) for site, via in
-            _instantiation_sites(sections, [name] + descendants(sections, name))]
+            _instantiation_sites(sections, names, vis)]
 
 
 # ---------------------------------------------------------------------------
