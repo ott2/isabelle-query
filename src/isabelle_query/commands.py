@@ -1426,8 +1426,16 @@ def cmd_instances(sections: list[TheorySection], name: str,
     """Where a locale or class is instantiated: the declared source sites."""
     _with_site_subject(sections, name, _sites.LOCALE_TAGS,
                        "a locale or class")
-    rows = [(s, "") for s in _sites.find_instantiations(sections, name)]
-    _emit_sites(sections, rows, name, "instantiation", flags)
+    # `-r` widens WHAT is asked about, not what counts as an answer: the
+    # resolution and the exit contract are the same question either way, so
+    # a subject with no transitive sites is the honest zero and an unknown
+    # one is still a refusal.
+    if flags.recursive:
+        rows = _sites.find_instantiations_transitive(sections, name)
+    else:
+        rows = [(s, "") for s in _sites.find_instantiations(sections, name)]
+    _emit_sites(sections, rows, name, "instantiation", flags,
+                transitive=flags.recursive)
 
 
 def cmd_callers(sections: list[TheorySection], name: str,

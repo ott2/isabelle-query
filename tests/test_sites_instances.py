@@ -6,7 +6,7 @@ The verb lists the lines that SUPPLY types or terms to a locale or class —
 can start, on the live view, so a heading, a comment, a `text` block or a
 `\<^cancel>` that spells the command word is not a site.  Extending a target
 (`class X = L + ...`, `sublocale L \<subseteq> M`'s `L` side) is a different
-relation and not a site; it is the edge `-r` walks (`test_sites_closure.py`).
+relation and not a site; it is the edge `-r` walks (`TheHierarchy` below).
 
 Every expectation below was read off the fixture theories by hand before the
 scan ran, and the line numbers are part of the expectation: do not insert
@@ -578,6 +578,193 @@ class TheParser(unittest.TestCase):
     def test_at_least_one_subject(self):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             self.parse("instances")
+
+    def test_recursive(self):
+        self.assertTrue(self.parse("instances", "L", "-r").recursive)
+        self.assertTrue(cli._flags_from_ns(
+            self.parse("instances", "L", "-rc")).recursive)
+
+
+def ext(text):
+    return sites.extends_heads(text, blank_terms(text))
+
+
+class TheHierarchy(SitesFixture):
+    r"""`-r`: the extension relation, hand-computed off `Closure_Fix` (an
+    arrow reads "extends")::
+
+        base -> hasb  (8)          mid -> base   (11)
+        leaf -> mid   (14)         side -> hasb  (17)
+        both -> side, leaf  (20)   qmid -> base  (22, QUALIFIED)
+        alt -> hasb   (25), alt -> base  (28, a `subclass` inside alt's block)
+
+    so descendants(base) = {mid, qmid, alt, leaf, both}, and the transitive
+    sites of `base` are the six arities of those classes plus its own --
+    every one in the file except `bool :: side` (44), whose class is a
+    SIBLING, except `prod :: (hasb, hasb) hasb` (50), whose class is base's
+    PARENT, and except the three decoys (78, 82, 84) that are not live text.
+    """
+
+    def test_extends_heads(self):
+        for text, want in [
+            ("class X = A + B + fixes f :: 'a", ["A", "B"]),
+            ('class X = A + assumes eq: "a = b" ', ["A"]),
+            ("class X = A + constrains f :: 'a", ["A"]),
+            ("class X = A + notes foo = bar", ["A"]),
+            ("class X = A", ["A"]),
+            ("class X = fixes f :: 'a", []),
+            ('locale X = q: "open" id + Groups.monoid plus',
+             ["open", "Groups.monoid"]),
+            ('locale X = folding "\\<lambda>x. x + 1" 0', ["folding"]),
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(ext(text), want)
+
+    def extenders(self, name):
+        return sorted(sites.extenders(self.sections, name))
+
+    def descendants(self, name):
+        return sorted(sites.descendants(self.sections, name))
+
+    def test_extenders(self):
+        self.assertEqual(self.extenders("hasb"), ["alt", "base", "side"])
+        self.assertEqual(self.extenders("base"), ["alt", "mid", "qmid"])
+        self.assertEqual(self.extenders("mid"), ["leaf"])
+        self.assertEqual(self.extenders("leaf"), ["both"])
+        self.assertEqual(self.extenders("side"), ["both"])
+        self.assertEqual(self.extenders("both"), [])
+
+    def test_decoys_are_not_extenders(self):
+        # `class ghost = base +` in a `text` block, `ghost2` in a comment.
+        self.assertNotIn("ghost", self.extenders("base"))
+        self.assertNotIn("ghost2", self.extenders("base"))
+
+    def test_descendants(self):
+        self.assertEqual(self.descendants("base"),
+                         ["alt", "both", "leaf", "mid", "qmid"])
+        self.assertEqual(self.descendants("mid"), ["both", "leaf"])
+        self.assertEqual(self.descendants("side"), ["both"])
+        self.assertEqual(self.descendants("both"), [])
+        # A class never has its own parent among its descendants.
+        self.assertNotIn("hasb", self.descendants("base"))
+
+    def test_a_locale_is_not_its_own_descendant(self):
+        # `semi` extends magma twice over (its header, and the `sublocale`
+        # at Sites_Fix:26); `sublocale magma < dual: magma ...` is a
+        # self-edge that neither loops nor makes magma its own descendant.
+        self.assertEqual(self.descendants("magma"), ["semi"])
+
+    def trans(self, name):
+        return sites.find_instantiations_transitive(self.sections, name)
+
+    def test_the_transitive_sites_of_base(self):
+        rows = self.trans("base")
+        self.assertEqual(self.loci([s for s, _v in rows]),
+                         ["Closure_Fix:32", "Closure_Fix:38", "Closure_Fix:56",
+                          "Closure_Fix:59", "Closure_Fix:65",
+                          "Closure_Fix:71"])
+        self.assertEqual([v for _s, v in rows],
+                         ["leaf", "base", "both", "mid", "qmid", "alt"])
+        self.assertEqual([s.kind for s, _v in rows],
+                         ["instantiation", "instantiation", "instance",
+                          "instantiation", "instantiation", "instantiation"])
+        self.assertEqual([s.name for s, _v in rows],
+                         ["nat", "int", "prod", "fun", "unit", "option"])
+        # The sibling (44) and the parent's own arity (50) are not among
+        # them.
+        self.assertNotIn(44, [s.line for s, _v in rows])
+        self.assertNotIn(50, [s.line for s, _v in rows])
+
+    def test_the_transitive_sites_of_the_rest(self):
+        for name, want in [
+            ("mid", ["Closure_Fix:32", "Closure_Fix:56", "Closure_Fix:59"]),
+            ("side", ["Closure_Fix:44", "Closure_Fix:56"]),
+            ("both", ["Closure_Fix:56"]),
+            ("hasb", ["Closure_Fix:32", "Closure_Fix:38", "Closure_Fix:44",
+                      "Closure_Fix:50", "Closure_Fix:56", "Closure_Fix:59",
+                      "Closure_Fix:65", "Closure_Fix:71"]),
+        ]:
+            with self.subTest(name=name):
+                self.assertEqual(self.loci([s for s, _v in self.trans(name)]),
+                                 want)
+
+    def test_a_leaf_of_the_hierarchy_is_its_direct_listing(self):
+        for name in ("both", "qmid", "alt"):
+            with self.subTest(name=name):
+                self.assertEqual(self.loci([s for s, _v in self.trans(name)]),
+                                 self.loci(self.inst(name)))
+
+    def test_no_dedup_pass_is_needed(self):
+        # `sublocale semi \<subseteq> magma f ..` (26) is both a site of
+        # magma and the edge that brings semi's (nonexistent) sites in: it
+        # appears exactly once, and every row is via magma itself.
+        rows = self.trans("magma")
+        self.assertEqual(self.loci([s for s, _v in rows]),
+                         self.loci(self.inst("magma")))
+        self.assertEqual([s.line for s, _v in rows].count(26), 1)
+        self.assertEqual({v for _s, v in rows}, {"magma"})
+        self.assertEqual(self.trans("semi"), [])
+
+
+class TheTransitiveCommand(SitesFixture):
+
+    def instances(self, name, **kw):
+        return self.run_cmd(commands.cmd_instances, self.sections, name,
+                            CmdFlags(recursive=True, **kw))
+
+    def test_counts(self):
+        for name, want in (("base", "6\n"), ("mid", "3\n"), ("side", "2\n"),
+                           ("both", "1\n"), ("magma", "5\n"), ("hasb", "8\n")):
+            with self.subTest(name=name):
+                self.assertEqual(self.instances(name, mode="count"), want)
+
+    def test_the_default_form_is_untouched(self):
+        self.assertEqual(self.run_cmd(commands.cmd_instances, self.sections,
+                                      "base", CmdFlags(mode="count")), "1\n")
+
+    def test_names(self):
+        self.assertEqual(
+            self.instances("base", mode="names"),
+            "Closure_Fix:32\nClosure_Fix:38\nClosure_Fix:56\nClosure_Fix:59\n"
+            "Closure_Fix:65\nClosure_Fix:71\n")
+
+    def test_the_table_with_its_via_column(self):
+        # Locus 14, name 6 (`option`), kind 13 (`instantiation`), VIA 4
+        # (`leaf` / `both` / `qmid`), each followed by two spaces.  Line 56
+        # wraps its proof onto the next line, so its source cell ends at
+        # `both`.
+        self.assertEqual(
+            self.instances("base"),
+            "6 instantiation(s) of base (transitive):\n"
+            "\n"
+            "  Closure_Fix:32  nat     instantiation  leaf  "
+            "instantiation nat :: leaf\n"
+            "  Closure_Fix:38  int     instantiation  base  "
+            "instantiation int :: base\n"
+            "  Closure_Fix:56  prod    instance       both  "
+            "instance prod :: (both, both) both\n"
+            "  Closure_Fix:59  fun     instantiation  mid   "
+            'instantiation "fun" :: (type, mid) mid\n'
+            "  Closure_Fix:65  unit    instantiation  qmid  "
+            "instantiation unit :: qmid\n"
+            "  Closure_Fix:71  option  instantiation  alt   "
+            "instantiation option :: (alt) alt\n")
+
+    def test_sorts_is_orthogonal(self):
+        got = self.instances("base", sorts=True)
+        self.assertIn("  nat :: leaf  ", got)
+        loci = [line.split()[0] for line in got.splitlines()[2:]]
+        self.assertEqual(loci, ["Closure_Fix:32", "Closure_Fix:38",
+                                "Closure_Fix:56", "Closure_Fix:59",
+                                "Closure_Fix:65", "Closure_Fix:71"])
+
+    def test_the_exit_contract_is_the_same_question(self):
+        self.assertEqual(self.instances("semi"),
+                         "No instantiations found for 'semi'.\n")
+        for name in ("no_such_locale_xyz", "uses_interpret"):
+            with self.subTest(name=name):
+                self.unresolved(commands.cmd_instances, self.sections, name,
+                                CmdFlags(recursive=True))
 
 
 if __name__ == "__main__":

@@ -569,3 +569,208 @@ def find_instantiations(sections: list[TheorySection], name: str
                         ) -> list[Site]:
     """Every instantiation site of ``name``."""
     return [site for site, _via in _instantiation_sites(sections, [name])]
+
+
+# ---------------------------------------------------------------------------
+# The class / locale hierarchy, and the transitive listing
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Extends:
+    r"""THE EDGE RELATION: ``child`` extends ``parent``, written in ``theory``.
+
+    The five ways the source writes one — live text only::
+
+        class X = ... Y ...        Y is a head of the class expression
+        locale X = ... Y ...       Y is a head of a locale-expression instance
+        subclass Y                 inside the block of `class X ... begin`
+        instance X ('<'|'\<subseteq>') Y
+        sublocale X ('<'|'\<subseteq>') Y ...
+        sublocale Y ...            inside `context X begin` / `locale X ... begin`
+
+    The first two are read off the DECLARATION's own header, so they iterate
+    entries rather than lines: an entry already knows where its command
+    starts and what it is called.  The rest are commands that declare no
+    entry, found the way the site scan finds its own — at a line where a
+    command may start, on the outer view.
+
+    `interpretation` and its kin are NOT edges: they supply types or terms,
+    so the thing interpreted is an instance of the locale rather than a
+    locale that IS one, and its own instantiations say nothing about the
+    subject's.  A `sublocale X \<subseteq> S` line is both a SITE of S and an
+    edge that pulls X's sites in — every instantiation of X is then an
+    instantiation of S — and nothing special-cases it, because one line
+    yields at most one site per scan.
+    """
+    child: str
+    parent: str
+    theory: str
+
+
+_EXTEND_CMD_RE = re.compile(r"^(subclass|instance|sublocale)(?![\w'])")
+
+# Where a class or locale expression STOPS: the first context element of the
+# declaration.  `defines`, `for`, `begin` and `where` already end the header
+# (`_HEADER_STOP_RE`); these four do not, because a site command has no
+# context elements.
+_CONTEXT_ELEM_RE = re.compile(
+    r"(?<![\w'])(fixes|constrains|assumes|notes)(?![\w'])")
+
+# An explicit `(in c)` target modifier, which RETARGETS the command it
+# prefixes exactly as it retargets a declaration (`Entry.target`).
+_IN_TARGET_RE = re.compile(r"^\s*\(\s*in(?![\w'])\s*")
+
+
+def extends_heads(live: str, outer: str) -> list[str]:
+    """The locales a ``class X = ...`` / ``locale X = ...`` header EXTENDS:
+    the heads of the expression after the ``=``, up to the first context
+    element.  The ``=`` and the stop are found on outer (a ``=`` inside a
+    term is neither); the names are read from live, since a head may be
+    quoted or qualified."""
+    n = min(len(live), len(outer))
+    m = _CONTEXT_ELEM_RE.search(outer)
+    stop = min(m.start(), n) if m else n
+    eq = outer.find("=")
+    if eq < 0 or eq + 1 > stop:
+        return []
+    return expression_heads(live[eq + 1:stop], outer[eq + 1:stop])
+
+
+def extends_edges(sections: list[TheorySection]) -> list[Extends]:
+    """Every edge in the project, in one pass.
+
+    A LIST rather than a parent-to-children map, because a parent is matched
+    under :func:`denotes` — the written spelling may be qualified — and a map
+    keyed by the written name would answer ``Groups.monoid`` to a question
+    about ``monoid`` only by being asked twice.
+    """
+    out: list[Extends] = []
+    for sec in sections:
+        live = sec.live_source()
+        outer = sec.outer_source()
+
+        for e in sec.entries:
+            if e.tag in LOCALE_TAGS and e.name and e.name != UNNAMED:
+                head_live, head_outer = _header_at(live, outer, e.thy_line)
+                for parent in extends_heads(head_live, head_outer):
+                    out.append(Extends(e.name, parent, sec.theory))
+
+        enclosing_name = _enclosing_lookup(sec, live, outer)
+        for i in range(1, len(outer) + 1):
+            stripped = outer[i - 1].lstrip()
+            m = _EXTEND_CMD_RE.match(stripped)
+            if not m:
+                continue
+            command = m.group(1)
+            head_live, head_outer = _header_at(live, outer, i)
+            at0 = len(outer[i - 1]) - len(stripped) + m.end()
+            at = at0 + _marker_end(head_live[at0:])
+            body_live = head_live[at:]
+            body_outer = head_outer[at:]
+
+            # `subclass (in c) Y` names its own child; otherwise the child of
+            # a `subclass` is the class block it sits in.
+            child = ""
+            t = _IN_TARGET_RE.match(body_outer)
+            if t:
+                nm = _name_at(body_live, t.end())
+                child = nm[0] if nm else ""
+                e = _paren_end(body_outer, body_outer.find("("))
+                if e > 0:
+                    body_live = body_live[e:]
+                    body_outer = body_outer[e:]
+
+            arrow = _SUBLOCALE_TARGET_RE.match(body_outer)
+            parents: list[str]
+            if command == "instance":
+                # `instance X \<subseteq> Y` -- and nothing else `instance`
+                # writes: an arity has no arrow, and a bare `instance ..` has
+                # no name.  The inclusion is a class expression of exactly
+                # one head, so the same reader serves.
+                if not arrow:
+                    parents = []
+                else:
+                    if not child:
+                        child = _sublocale_target(body_live, body_outer)
+                    parents = expression_heads(body_live[arrow.end():],
+                                               body_outer[arrow.end():])
+            elif command == "sublocale":
+                if not child:
+                    child = (_sublocale_target(body_live, body_outer)
+                             if arrow else enclosing_name(i))
+                cut = arrow.end() if arrow else 0
+                parents = expression_heads(body_live[cut:], body_outer[cut:])
+            else:
+                if not child:
+                    child = enclosing_name(i)
+                nm = _name_at(body_live, _skip_space(body_live, 0))
+                parents = [nm[0]] if nm else []
+            if child:
+                for parent in parents:
+                    out.append(Extends(child, parent, sec.theory))
+    return out
+
+
+def _extenders_of(edges: list[Extends], admits, name: str) -> list[str]:
+    out: list[str] = []
+    for e in edges:
+        if (denotes(e.parent, name) and not denotes(e.child, name)
+                and admits(e.theory) and e.child not in out):
+            out.append(e.child)
+    return out
+
+
+def extenders(sections: list[TheorySection], name: str) -> list[str]:
+    """The classes and locales that extend ``name`` DIRECTLY.
+
+    An edge counts only where its section can see the declaration of
+    ``name``, the same necessary condition a site obeys — two projects that
+    each declare a ``monoid`` do not extend each other's.  A self-edge
+    (``sublocale L < dual: L ...``) is not an extension and is dropped here
+    rather than left for the caller.
+    """
+    return _extenders_of(extends_edges(sections), site_filter(sections, name),
+                         name)
+
+
+def descendants(sections: list[TheorySection], name: str) -> list[str]:
+    """Everything that IS a ``name``, transitively.
+
+    Breadth-first over the edge relation, ``name`` itself excluded (it is
+    not its own descendant), with a visited set so that a cycle — which
+    Isabelle's own checks rule out, but a text scan of a half-written theory
+    does not — terminates rather than hangs.  The visibility filter is
+    applied per parent at each step, memoised: a descendant declared
+    elsewhere in the corpus has its own visibility, not its ancestor's.
+    """
+    edges = extends_edges(sections)
+    filters: dict = {}
+
+    def admits(n: str):
+        if n not in filters:
+            filters[n] = site_filter(sections, n)
+        return filters[n]
+
+    seen = {name}
+    out: list[str] = []
+    queue = [name]
+    while queue:
+        here = queue.pop(0)
+        for child in _extenders_of(edges, admits(here), here):
+            if child not in seen:
+                seen.add(child)
+                out.append(child)
+                queue.append(child)
+    return out
+
+
+def find_instantiations_transitive(sections: list[TheorySection], name: str
+                                   ) -> list[tuple[Site, str]]:
+    """The transitive instantiation sites of ``name``: every site of
+    ``name`` itself and of everything that extends it, deduplicated by
+    construction (one scan, one row per line), each with the ``VIA`` cell —
+    the closure members the line actually writes, comma-joined — which is
+    what makes a row naming neither the subject nor anything the reader
+    recognises explicable."""
+    return [(site, ", ".join(via)) for site, via in
+            _instantiation_sites(sections, [name] + descendants(sections, name))]
