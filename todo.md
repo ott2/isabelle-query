@@ -7,14 +7,14 @@ finding it again with `git log --grep`.
 Conventions for changing the tool (the CLI contract, verification habits) live
 in `CONTRIBUTING.md`.
 
-- [ ] `[decl-commands]` Four fact-declaring commands are **not declarations**,
+- [ ] `[decl-commands]` Three fact-declaring commands are **not declarations**,
       so `query` cannot see them and — worse — they do not bound the previous
       entry either, so the lemma above them swallows their proof.  `DECL_RE`
-      lists `lemma|corollary|theorem` and stops.
+      now lists `lemma|corollary|proposition|theorem` and stops.
       Measured over **11,604 theories** (the whole AFP + HOL/FOL/ZF) by
       `scripts/probe_missing_decl_commands.py`, command position only:
 
-          lemmas           14,133      proposition      1,700
+          lemmas           14,133      proposition      SHIPPED (v0.9.0)
           named_theorems      696      schematic_goal     810
           private lemma     1,193      qualified lemma    345   (+~1,000 modified)
 
@@ -25,23 +25,16 @@ in `CONTRIBUTING.md`.
       340,587 entries, `definition` 55,492, `theorem` 8,164, `corollary` 4,723,
       so `proposition` is ~0.5% of the declaration population.  The same run also
       shows `lemma` itself missed 893 times (0.3%) — a separate, unfiled residual.
-      Census exposure, via `scripts/probe_unscanned_exposure.py`: the two goal
-      commands own **13,515 proof lines, 0.37%** of the corpus's proof text
-      (`proposition` 6,798, `schematic_goal` 6,717).  `lemmas` /
-      `named_theorems` own no proof, so their 38,472 lines are declaration text
-      and move `find`/`show`/`callers`, not the census.
+      Census exposure, via `scripts/probe_unscanned_exposure.py`:
+      `schematic_goal` owns **6,717 proof lines, 0.18%** of the corpus's proof
+      text.  `lemmas` / `named_theorems` own no proof, so their 38,472 lines are
+      declaration text and move `find`/`show`/`callers`, not the census.
 
-      **`proposition` is the clear one**: Isabelle declares it `thy_goal_stmt`
-      in `Pure`, the identical kind to `lemma` / `theorem` / `corollary`, three
-      of which `DECL_RE` already knows.  There is no design note excluding it —
-      the table's only deliberate absences are `context` and `interpretation`,
-      which reopen or instantiate rather than declare.
-      The knock-on is what makes it worth doing rather than tidy:
-      `probe_proof_bearing_commands.py` reads `proposition` as 34.3% unscanned
-      rather than 100%, because two thirds of the time the preceding lemma's
-      span has already reached over it and its steps were counted as that
-      lemma's.  So this moves the entry set AND the census, and the fix must
-      report both.
+      **`proposition` shipped in v0.9.0** — `git log --grep='\[decl-commands\]'`.
+      It is the precedent for the rest: the same exposure probe predicted 0.37%
+      of proof text for `proposition`+`schematic_goal` and the realised census
+      move was **+0.44% `n_steps`**, so the probe's estimate is worth trusting
+      for `schematic_goal`'s remaining 0.18% rather than re-deriving.
       `private` / `qualified` are a different shape: namespace MODIFIERS that
       may precede any declaration, so the fix is a prefix skip, not four more
       table rows.  `lemmas` / `named_theorems` declare a citable fact with no
