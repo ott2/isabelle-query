@@ -11,12 +11,25 @@ in `CONTRIBUTING.md`.
       so `query` cannot see them and — worse — they do not bound the previous
       entry either, so the lemma above them swallows their proof.  `DECL_RE`
       lists `lemma|corollary|theorem` and stops.
-      Measured over 2,644 theories (60 AFP entries + all of HOL/FOL/ZF) by
+      Measured over **11,604 theories** (the whole AFP + HOL/FOL/ZF) by
       `scripts/probe_missing_decl_commands.py`, command position only:
 
-          lemmas            3,491      proposition        601
-          named_theorems      207      schematic_goal     160
-          private lemma       275      qualified lemma    209   (+~250 modified)
+          lemmas           14,133      proposition      1,700
+          named_theorems      696      schematic_goal     810
+          private lemma     1,193      qualified lemma    345   (+~1,000 modified)
+
+      Those replace an earlier 60-entry reading (3,491 / 601 / 207 / 160 / 275 /
+      209) which was **3–5x low**: `probe_missing_decl_commands.py --limit` takes
+      `sorted(AFP)[:N]`, an alphabetical PREFIX and not a sample, so the old
+      figures described the A's.  Denominators from the same run: `lemma` is
+      340,587 entries, `definition` 55,492, `theorem` 8,164, `corollary` 4,723,
+      so `proposition` is ~0.5% of the declaration population.  The same run also
+      shows `lemma` itself missed 893 times (0.3%) — a separate, unfiled residual.
+      Census exposure, via `scripts/probe_unscanned_exposure.py`: the two goal
+      commands own **13,515 proof lines, 0.37%** of the corpus's proof text
+      (`proposition` 6,798, `schematic_goal` 6,717).  `lemmas` /
+      `named_theorems` own no proof, so their 38,472 lines are declaration text
+      and move `find`/`show`/`callers`, not the census.
 
       **`proposition` is the clear one**: Isabelle declares it `thy_goal_stmt`
       in `Pure`, the identical kind to `lemma` / `theorem` / `corollary`, three
@@ -42,6 +55,14 @@ in `CONTRIBUTING.md`.
       verb.  Measured by `scripts/probe_proof_bearing_commands.py` over 687
       theories: **11,300 proof commands, ~2% of the corpus**, 100% unscanned
       for each of these owners.
+      That 687 is every theory with a built session database, so it cannot see
+      the AFP.  Re-measured where the code runs — `probe_unscanned_exposure.py`,
+      all **11,604 theories**, counting owning commands and the lines they own
+      rather than markup proof commands (a coarser unit, same denominator both
+      sides): **16,778 commands owning 58,516 proof lines, 1.58%** of all proof
+      text.  So the ~2% rate holds corpus-wide, and this is **4x the census
+      exposure of `[decl-commands]`'s 0.37%** — the two are worth comparing
+      before either ships, since both move the same published numbers.
 
           interpretation dual: abstract_boolean_algebra ...  HOL/Boolean_Algebras:140
             apply standard                     <- five proof commands,
@@ -55,14 +76,28 @@ in `CONTRIBUTING.md`.
           global_interpretation     574   interpretation      752
           termination               194   notepad             160
 
+      Corpus-wide, as owning commands and the lines each owns — the shape of
+      the population, which the 687-theory proof-command counts above do not
+      show:
+
+          instance        4,156  12,889   3.1     subclass         673   1,909  2.8
+          lift_definition 3,565   9,247   2.6     termination      657   1,889  2.9
+          sublocale       3,560  12,441   3.5     global_interp    623   4,444  7.1
+          interpretation  3,431  14,614   4.3     notepad          113   1,083  9.6
+
       The question is whether `shape` measures *proofs* or *proofs of facts*.
       Today it is the second, by accident rather than by decision — the entry
       model is a **declaration** index and `shape` rides on it.  Both readings
-      are defensible and the numbers differ by ~2%, so the answer belongs in a
-      commit message before any code moves.  Note `instance` alone is 6,706 and
-      is mostly one-liners (`instance ..`), so the population is not shaped
-      like the lemma population and would move the aggregate distributions, not
-      just their totals.  Distinct from `[decl-commands]`, which is a defect in
+      are defensible and the numbers differ by ~1.6%, so the answer belongs in a
+      commit message before any code moves.
+      **"`instance` is mostly one-liners, so the population is not shaped like
+      the lemma population" does not survive the corpus-wide read**: `instance`
+      is 25% of the occurrences, not the 59% the sample suggested, and the
+      lines-per-command column splits the population rather than unifying it —
+      `instance` 3.1 against `global_interpretation` 7.1 and `notepad` 9.6.
+      Whatever the aggregate distributions do, it is not one keyword's shape
+      driving it, so that argument needs remaking from these numbers before it
+      is leaned on.  Distinct from `[decl-commands]`, which is a defect in
       the same probe's other half.
 
 - [ ] `[comment-newline]` A `\<comment>` may be separated from its cartouche
