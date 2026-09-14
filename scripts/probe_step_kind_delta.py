@@ -86,6 +86,28 @@ def load(path: str) -> dict[str, dict]:
     return out
 
 
+def totals(a_path: str, b_path: str) -> None:
+    """Census totals over EVERY record, not just the shared ones.
+
+    `diff` reports the shared set, which is the right denominator for "what
+    moved under a stable key" — but a change that ADDS proofs puts their steps
+    outside it, so a pure redistribution and a real gain read the same there.
+    This is the other half: the published totals, which is what a release note
+    quotes.
+    """
+    a, b = load(a_path), load(b_path)
+    print(f"{'field':<14}{'before':>16}{'after':>16}{'delta':>14}")
+    for f in FIELDS:
+        if f == "kinds":
+            continue
+        sa = sum(r[f] for r in a.values() if isinstance(r[f], (int, float)))
+        sb = sum(r[f] for r in b.values() if isinstance(r[f], (int, float)))
+        pct = f"{(sb - sa) / sa:+.2%}" if sa else "—"
+        print(f"{f:<14}{sa:>16,.0f}{sb:>16,.0f}{pct:>14}")
+    print(f"{'n_proofs':<14}{len(a):>16,}{len(b):>16,}"
+          f"{(len(b) - len(a)) / len(a):>+14.2%}")
+
+
 def diff(a_path: str, b_path: str) -> None:
     a, b = load(a_path), load(b_path)
     print(f"before {len(a):,} proofs, after {len(b):,} proofs")
@@ -136,6 +158,9 @@ def diff(a_path: str, b_path: str) -> None:
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["--totals"]:
+        totals(sys.argv[2], sys.argv[3])
+        return
     if sys.argv[1:2] == ["--diff"]:
         diff(sys.argv[2], sys.argv[3])
         return
