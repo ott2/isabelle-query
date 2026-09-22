@@ -22,4 +22,5 @@
 - [Memory tracked in repo](memory-tracked-in-repo.md) — query's memory dir is in-repo at .claude/memory (symlinked from system path), version-controlled; commit changes
 - [Namespace extractor misses induction](namespace-extractor-misses-induction.md) — `induction` registers via the Induct.gen_induct_setup factory not Method.setup; extractor now matches it (fixed at root); regen from the 2025-2 bundle symlink, not ~/repos/isabelle (HEAD)
 - [isabelle export triggers a build](isabelle-export-builds.md) — it is NOT read-only; read the session .db (`isabelle_exports`, Zstd) read-only with sqlite instead
+- [CLAUDE.md is a guideline, not authority](claude-md-is-guideline-not-authority.md) — when a project doc and the actual facts disagree, follow the facts and amend the doc
 - [Reuse infrastructure, don't reinvent](reuse-infrastructure-not-reinvent.md) — the steer is NOT "reduce regex" (regex is often right); it's don't reinvent tables Isabelle/query already own — enumerate methods from a running Isabelle offline, keep the declarative keyword-block scan; runtime stays pure-Python
