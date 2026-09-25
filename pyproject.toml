@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "isabelle-query"
-version = "0.9.0"
+version = "0.9.1"
 description = "Query the live theory index of an Isabelle/Isar project — entries, call graph, dependencies, and dead code — by parsing .thy files on every invocation."
 readme = "README.md"
 requires-python = ">=3.9"
