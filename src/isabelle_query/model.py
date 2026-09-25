@@ -419,6 +419,7 @@ class CmdFlags:
     comments: str = "on"         # on / off / only
     context: int = 2             # -U N / --context N
     with_comments: bool = False  # --with-comments (find + grep: search prose)
+    ignore_case: bool = False    # -i / --ignore-case (grep; find always is)
     recursive: bool = False      # -r / --recursive
     by_theory: bool = False      # --by-theory (unused)
     roots: bool = False          # --roots (unused)

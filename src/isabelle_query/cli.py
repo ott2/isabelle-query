@@ -324,6 +324,7 @@ def _flags_from_ns(ns: argparse.Namespace) -> CmdFlags:
         f.comments = "only"
     f.context = getattr(ns, "context", 2)
     f.with_comments = getattr(ns, "with_comments", False)
+    f.ignore_case = getattr(ns, "ignore_case", False)
     f.recursive = getattr(ns, "recursive", False)
     f.by_theory = getattr(ns, "by_theory", False)
     f.roots = getattr(ns, "roots", False)
@@ -621,6 +622,27 @@ def _add_line_number_noop_flag(p: argparse.ArgumentParser) -> None:
                    help="accepted and ignored — every match already prints "
                         "its `theory.thy:LINE` locus (grep-compatibility "
                         "no-op)")
+
+
+def _add_ignore_case_flag(p: argparse.ArgumentParser,
+                          noop: bool = False) -> None:
+    """`-i`/`--ignore-case`, grep's spelling, on both search verbs.
+
+    On `grep` it compiles the pattern with `re.IGNORECASE` -- the same as a
+    leading `(?i)`, which nobody guesses from "Python syntax" -- so it
+    composes with the `\\|` rewrite.  `find` already matches without regard
+    to case, so there it is `-n`'s kind of no-op: accepted so that a
+    grep-reflex caller gets the answer they asked for instead of a usage
+    error that sends them to `rg -i` (issue #13).
+    """
+    if noop:
+        p.add_argument("-i", "--ignore-case", action=_IgnoredFlagAction,
+                       help="accepted and ignored — find already matches "
+                            "case-insensitively")
+    else:
+        p.add_argument("-i", "--ignore-case", action="store_true",
+                       help="match without regard to case (as a leading "
+                            "`(?i)` in the pattern)")
 
 
 def _add_with_comments_flag(
@@ -1273,6 +1295,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_comment_flags(p)
     _add_context_flag(p)
     _add_with_comments_flag(p)
+    _add_ignore_case_flag(p, noop=True)
     _add_theory_scope_flag(p)
     # No `-A` short flag, for the same reason `--names` has no `-n`: `-A` is
     # grep's after-context, and squatting on it would silently change what a
@@ -1367,6 +1390,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_count_flag(p)
     _add_names_flag(p, "locations + owning entry only "
                        "(skip the matched line text)")
+    _add_ignore_case_flag(p)
     _add_line_number_noop_flag(p)
     p.set_defaults(func=_run_grep)
 

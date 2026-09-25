@@ -1955,7 +1955,8 @@ def cmd_grep(sections: list[TheorySection], pattern: str,
     own: shell-grep alternation (`a\\|b\\|c`) and Isabelle markup
     (`\\<^sub>`) both mean here what they look like.
     """
-    pat = _compile_user_pattern(pattern)
+    pat = _compile_user_pattern(
+        pattern, re.IGNORECASE if flags.ignore_case else 0)
 
     all_hits = _grep_sections(sections, pat)
     live_hits = [h for h in all_hits if h[4]]
