@@ -221,4 +221,5 @@ pip install -e .
 
 ## Authors & license
 
-By András Salamon, with Claude Opus 4.6, 4.7, 4.8, and 5. [MIT](LICENSE).
+By András Salamon, with Claude Opus 4.6, 4.7, 4.8, and 5.
+`instances` and `codeqs` by David Wang, with Claude Fable 5.1. [MIT](LICENSE).

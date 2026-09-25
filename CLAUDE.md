@@ -147,6 +147,12 @@ to PyPI, not the assistant: it is the one step here that cannot be undone.
 4.6, 4.7, 4.8, and 5." — `README.md`'s sign-off and `pyproject.toml`'s author
 comment are the two places it belongs.
 
+**Outside contributions get their own line**, naming the contribution rather
+than merging author lists — "`instances` and `codeqs` by David Wang, with
+Claude Fable 5.1." (PR #11) sits under the main line in both places. A
+contributor is **not** added to `pyproject.toml`'s `authors`: entries there
+carry an email, and a contributor's address is theirs to publish.
+
 **Commit messages do not.** They carry the `Co-Authored-By` trailer alone, and
 that includes the version-bump commit — even though its message is published
 verbatim as the GitHub Release body, a commit is not an artifact for this

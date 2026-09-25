@@ -10,6 +10,8 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 # Authored by András Salamon, with Claude Opus 4.6, 4.7, 4.8, and 5.
+# `instances` and `codeqs` by David Wang, with Claude Fable 5.1 — a
+# contributor, credited here and in README.md but not listed in `authors`.
 authors = [
     { name = "András Salamon", email = "Andras.Salamon@st-andrews.ac.uk" },
 ]
