@@ -97,7 +97,10 @@ name, so it appears only under `-r`. Without the flag the listing is the direct
 sites alone.
 
 **`codeqs` under-reports when mixfix notation hides the statement's head
-symbol.** Check source with `grep` if an answer looks short. Neither verb
+symbol**: an equation of an operator (`"Ratreal x + Ratreal y = ..."`,
+`"xs @ ys = ..."`) names no constant at its head, and is not listed under the
+operator or under an operand. Check source with `grep` if an answer looks
+short. Neither verb
 separates same-named declarations that are both visible from one theory: a
 site is attributed to a declaration in that theory or its transitive imports
 within the scanned project, and declarations that live only in a heap are not

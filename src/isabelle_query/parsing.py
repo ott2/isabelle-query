@@ -272,6 +272,21 @@ ISA_MARKUP = rf"\\<{_NOT_STRUCTURAL}\^?\w+>"
 ISA_WORD_CHAR = rf"(?:{ISA_SYMBOL}|[\w'])"
 ISA_NAME_CHAR = rf"(?:{ISA_MARKUP}|[\w'])"
 SYM_NAME_RE = re.compile(rf"((?:{ISA_MARKUP}|\w){ISA_NAME_CHAR}*)")
+# Greek + variant **letter** symbols: these are identifier characters (a
+# `\<Gamma>` context, an `\<alpha>` ordinal), NOT operators — `shape`'s
+# tokeniser keeps `\<alpha>` as a bare `\<sym>` because `_is_name` gates on an
+# ASCII letter, so without this set they would masquerade as operator
+# constants; `sites` asks the same question of the token after an equation's
+# head.
+LETTER_SYMS = frozenset({
+    "\\<alpha>", "\\<beta>", "\\<gamma>", "\\<delta>", "\\<epsilon>", "\\<zeta>",
+    "\\<eta>", "\\<theta>", "\\<iota>", "\\<kappa>", "\\<mu>", "\\<nu>", "\\<xi>",
+    "\\<pi>", "\\<rho>", "\\<sigma>", "\\<tau>", "\\<upsilon>", "\\<phi>",
+    "\\<chi>", "\\<psi>", "\\<omega>", "\\<varepsilon>", "\\<vartheta>",
+    "\\<varphi>", "\\<varrho>", "\\<varsigma>", "\\<varpi>",
+    "\\<Gamma>", "\\<Delta>", "\\<Theta>", "\\<Lambda>", "\\<Xi>", "\\<Pi>",
+    "\\<Sigma>", "\\<Upsilon>", "\\<Phi>", "\\<Psi>", "\\<Omega>",
+})
 # Outer-syntax keywords that are not fact names.  When the name slot holds one
 # of these *bare* — `lemma assumes ...`, `lemma fixes ...`, `... (eqvt) by ...`,
 # `lemma shows NAME: ...` — the construct is anonymous (or its true name

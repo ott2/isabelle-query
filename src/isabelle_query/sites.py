@@ -44,6 +44,7 @@ from isabelle_query.graph import _Visibility, _entry_by_name, site_filter
 from isabelle_query.model import Entry, TheorySection
 from isabelle_query.parsing import (
     ISA_MARKUP,
+    LETTER_SYMS,
     QUOTED_NAME_RE,
     RESERVED_NAME_PREFIXES,
     TAG_MAP,
@@ -974,21 +975,30 @@ def dropped_constants(live: str, attr: CodeAttr) -> list[str]:
 #     the equation;
 #   * take the left of the first top-level equality (`=`, `\<equiv>`, `==`,
 #     `\<longleftrightarrow>`);
-#   * the heads are the identifiers in HEAD POSITION there: the first
-#     token, and the first token after each `(`.
+#   * the head is the identifier in HEAD POSITION there: the first token,
+#     read as a whole qualified name (`HOL.equal`, not `HOL`).
 #
-# The second half of that last rule is what makes `[code abstract]` work: an
-# abstract equation reads `Rep_T (f x) = ...`, whose outermost head is the
-# projection and whose subject is `f`.  It over-reports by exactly one case
-# -- `f (g x) y = ...` names `g` too -- which is the direction the rest of
-# the tool's approximations lean: a spurious site, never a missing one.
-# When mixfix notation hides the head symbol (`"xs @ ys = ..."`) no head is
-# found and the site is not reported; the README says so.
+# An ABSTRACT equation (`[code abstract]`) reads `Rep_T (f x) = ...`: the
+# outermost head is the projection and the subject is `f`, the head of its
+# first argument, so that one attribute reads one level further in.  Only
+# that one: in a plain `[code]` equation the first token of a parenthesised
+# argument is a pattern (`ntrancl (Suc n) r`) or an argument
+# (`insert x (set xs)`), and naming it as a head attributed 30% of the
+# single-line `[code]` lemmas in HOL to a second, wrong constant.
+#
+# When mixfix notation hides the head symbol there is no head: an operator
+# symbol right after the first token (`"xs @ ys = ..."`, `"A - set xs"`)
+# means that token is an operand, and a leading `(` means the head is
+# inside a bracketed operand.  Nothing is reported rather than the operand
+# -- which may be a constant, and would then be credited with an equation
+# of `-` -- so the approximation leans the one way the README states: it
+# under-reports under mixfix.
 _PROP_RE = re.compile(r'"([^"]*)"|\\<open>(.*?)\\<close>')
 _SHOWS_RE = re.compile(r"(?<![\w'])shows(?![\w'])")
 _BINDER_RE = re.compile(r"^\s*\\<(?:And|forall)>[^.]*\.\s*")
 _META_IMP = ("\\<Longrightarrow>", "==>")
-_HEAD_TOKEN_RE = re.compile(rf"^({_ISA_NAME})")
+_HEAD_TOKEN_RE = re.compile(rf"^({_ISA_NAME}(?:\.{_ISA_NAME})*)")
+_SYMBOL_RE = re.compile(r"\\<\^?\w+>")
 
 
 def _top_equality(prop: str) -> int:
@@ -1035,25 +1045,75 @@ def _strip_premises(prop: str) -> str:
     return prop[m.end():] if m else prop
 
 
-def _head_identifiers(lhs: str) -> list[str]:
-    out: list[str] = []
+def _mixfix_after(lhs: str, pos: int) -> bool:
+    """Whether an operator symbol stands at the top level of ``lhs`` past
+    ``pos``.  Application binds tighter than any infix, so one anywhere --
+    `xs @ ys`, and `set xs \\<union> A` after an argument -- means the first
+    token is an operand, not the head.  Names, numerals, brackets and letter
+    symbols are arguments; anything else is syntax (`@`, `-`, `\\<union>`,
+    a record update's `\\<lparr>`)."""
+    n = len(lhs)
+    while pos < n:
+        c = lhs[pos]
+        if c.isspace() or c.isalnum() or c in "_'?.":
+            pos += 1
+        elif c in "([{":
+            close = {"(": ")", "[": "]", "{": "}"}[c]
+            depth = 0
+            while pos < n:
+                if lhs[pos] == c:
+                    depth += 1
+                elif lhs[pos] == close:
+                    depth -= 1
+                    if depth == 0:
+                        break
+                pos += 1
+            pos += 1
+        elif c == "\\":
+            m = _SYMBOL_RE.match(lhs, pos)
+            sym = m.group(0) if m else ""
+            if not (sym in LETTER_SYMS or sym.startswith("\\<^")):
+                return True
+            pos += len(sym)
+        else:
+            return True
+    return False
 
-    def take(at: int) -> None:
-        pos = _skip_space(lhs, at)
-        if pos < len(lhs):
-            m = _HEAD_TOKEN_RE.match(lhs[pos:])
-            if m:
-                out.append(m.group(1))
 
-    take(0)
-    for i, c in enumerate(lhs):
-        if c == "(":
-            take(i + 1)
-    return out
+def _head_at(lhs: str, at: int) -> tuple[str, int] | None:
+    """The head of the application starting at ``at`` and where it ends,
+    or None when mixfix syntax hides it."""
+    pos = _skip_space(lhs, at)
+    m = _HEAD_TOKEN_RE.match(lhs[pos:])
+    if not m:
+        return None
+    end = pos + m.end()
+    if _mixfix_after(lhs, end):
+        return None
+    return m.group(1), end
 
 
-def equation_heads(statement: str) -> list[str]:
-    """The constants at the head of each proposition's left-hand side."""
+def _lhs_head(lhs: str, abstract: bool) -> str:
+    got = _head_at(lhs, 0)
+    if got is None:
+        return ""
+    head, end = got
+    if not abstract:
+        return head
+    # `Rep_T (f x)` -> `f`; `Rep_T c` -> `c`.
+    pos = _skip_space(lhs, end)
+    if lhs.startswith("(", pos):
+        close = _paren_end(lhs, pos)
+        inner = _head_at(lhs[pos + 1:close - 1], 0) if close > 0 else None
+    else:
+        m = _HEAD_TOKEN_RE.match(lhs[pos:])
+        inner = (m.group(1), pos + m.end()) if m else None
+    return inner[0] if inner else ""
+
+
+def equation_heads(statement: str, abstract: bool = False) -> list[str]:
+    """The constant at the head of each proposition's left-hand side --
+    of the projection's argument, for an ``abstract`` equation."""
     m = _SHOWS_RE.search(statement)
     body = statement[m.end():] if m else statement
     out: list[str] = []
@@ -1063,9 +1123,9 @@ def equation_heads(statement: str) -> list[str]:
             continue
         concl = _strip_premises(prop)
         eq = _top_equality(concl)
-        for h in _head_identifiers(concl[:eq] if eq >= 0 else concl):
-            if h not in out:
-                out.append(h)
+        h = _lhs_head(concl[:eq] if eq >= 0 else concl, abstract)
+        if h and h not in out:
+            out.append(h)
     return out
 
 
@@ -1188,7 +1248,11 @@ def find_code_equations(sections: list[TheorySection], name: str
             return ""
         return "\n".join(live[e.thy_line - 1:stop])
 
-    def fact_denotes(token: str) -> bool:
+    def heads_denote(statement_text: str, attr: CodeAttr) -> bool:
+        return any(denotes(h, name) for h in equation_heads(
+            statement_text, abstract=attr.arg == "abstract"))
+
+    def fact_denotes(token: str, attr: CodeAttr) -> bool:
         # A fact name resolves to the constant when it SPELLS it, or when
         # the entry it names is a lemma whose own equation head is the
         # constant -- `declare card_set [code]` for
@@ -1200,7 +1264,7 @@ def find_code_equations(sections: list[TheorySection], name: str
             return False
         sec = sec_by_name.get(token)
         live = sec.live_source() if sec is not None else []
-        return name in equation_heads(statement(live, got[1]))
+        return heads_denote(statement(live, got[1]), attr)
 
     # Same visibility rule as `instances` and the citation scan: a `[code]`
     # equation for a constant this theory cannot see is an equation for
@@ -1240,13 +1304,13 @@ def find_code_equations(sections: list[TheorySection], name: str
                     subject_here = (e.tag in CONSTANT_TAGS
                                     and (e.name == name
                                          or name in e.bound_names))
-                    heads = [] if subject_here else equation_heads(head_live)
                     for attr in attrs:
                         if attr.config:
                             hit = any(denotes(c, name) for c in
                                       dropped_constants(head_live, attr))
                         else:
-                            hit = subject_here or name in heads
+                            hit = (subject_here
+                                   or heads_denote(head_live, attr))
                         if hit:
                             attributed = True
                             found.append(Site(
@@ -1291,7 +1355,7 @@ def find_code_equations(sections: list[TheorySection], name: str
                 else:
                     dropped = []
                     cited = cited_fact_names(head_outer, at)
-                if dropped or any(fact_denotes(t) for t in cited):
+                if dropped or any(fact_denotes(t, attr) for t in cited):
                     # The BINDING LABEL: the fact the attribute is attached
                     # to, which is the first name the command writes --
                     # `card_set` in `declare card_set [code]`, `eq_fold` in

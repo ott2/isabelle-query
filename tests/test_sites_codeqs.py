@@ -174,9 +174,26 @@ class TheGrammars(unittest.TestCase):
             (' "twice n = 2 * n" ', ["twice"]),
             (' "thrice n = twice n + n" ', ["thrice"]),
             (' "n > 0 \\<Longrightarrow> half n = n div 2" ', ["half"]),
-            # The head after each `(` too, which is what makes an abstract
-            # equation `Rep_T (f x) = ...` a site of `f`.
-            (' "rep_pos (mk n) = max 1 n" ', ["rep_pos", "mk"]),
+            # A plain equation's head is its first token only: what opens a
+            # parenthesised argument is a pattern or an argument.
+            (' "rep_pos (mk n) = max 1 n" ', ["rep_pos"]),
+            (' "ntrancl (Suc n) r = r" ', ["ntrancl"]),
+            (' "insert x (set xs) = set (x # xs)" ', ["insert"]),
+            # Read as one qualified name, not cut at the dot.
+            (' "HOL.equal n (n::natural) \\<longleftrightarrow> True" ',
+             ["HOL.equal"]),
+            # Mixfix hides the head: an operator after the first token, or
+            # a bracketed operand first, is no head at all -- never the
+            # operand (`A` here is `minus_set_fold`'s left operand of `-`).
+            (' "A - set xs = fold Set.remove xs A" ', []),
+            (' "xs @ ys = foldr Cons xs ys" ', []),
+            (' "A \\<union> B = C" ', []),
+            (' "(A - B) = C" ', []),
+            # ... or after the first token's arguments: application binds
+            # tighter than any infix (HOL's `union_code`).
+            (' "set xs \\<union> A = fold insert xs A" ', []),
+            # A letter symbol is an argument, not an operator.
+            (' "f \\<alpha> = 0" ', ["f"]),
             (' "f x \\<equiv> g x" ', ["f"]),
             (' "p x \\<longleftrightarrow> q x" ', ["p"]),
             (' \\<open>f x = y\\<close> ', ["f"]),
@@ -186,6 +203,20 @@ class TheGrammars(unittest.TestCase):
         ]:
             with self.subTest(text=text):
                 self.assertEqual(sites.equation_heads(text), want)
+
+    def test_abstract_equation_heads(self):
+        # `[code abstract]`: `Rep_T (f x) = ...` is an equation of `f`, the
+        # head of the projection's argument -- `rat_sgn_code` in HOL's Rat.
+        for text, want in [
+            (' "rep_pos (mk n) = max 1 n" ', ["mk"]),
+            (' "quotient_of (sgn p) = (sgn (fst (quotient_of p)), 1)" ',
+             ["sgn"]),
+            (' "Rep_T c = 0" ', ["c"]),
+            (' "Rep_T (a + b) = 0" ', []),
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    sites.equation_heads(text, abstract=True), want)
 
     def test_written_type(self):
         for text, name, want in [
@@ -569,6 +600,65 @@ class TheCollisionFixture(unittest.TestCase):
                 commands.cmd_instances(self.sections, "no_such_locale_xyz",
                                        CmdFlags())
         self.assertEqual(caught.exception.code, 1)
+
+
+# The handoff's reproduction of the mis-attribution, hand-read: `A` is a
+# declared constant (7), and `minus_set_fold`'s shape (9) is an equation of
+# `-`, whose left operand is `A`; `insert_code` (12) is one of `insert`, not
+# of the `set` in its argument; `set_abs` (15) is an abstract equation, which
+# IS one of the `mk` in the projection's argument.
+MIXFIX_FIX = r'''theory Mixfix_Fix
+  imports Main
+begin
+
+definition set :: "nat \<Rightarrow> nat set" where "set n = {n}"
+
+definition A :: "nat set" where "A = {}"
+
+lemma minus_fold [code]: "A - set xs = fold Set.remove xs A"
+  sorry
+
+lemma insert_code [code]: "insert x (set n) = set x \<union> set n"
+  sorry
+
+lemma set_abs [code abstract]: "Rep_T (mk n) = set n"
+  sorry
+
+definition mk :: "nat \<Rightarrow> nat" where "mk n = n"
+
+end
+'''
+
+
+class MixfixAttribution(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        (d / "Mixfix_Fix.thy").write_text(MIXFIX_FIX, encoding="utf-8")
+        (d / "ROOT").write_text(
+            "session Fix = HOL +\n  theories\n    Mixfix_Fix\n",
+            encoding="utf-8")
+        cli._ROOT_OVERRIDE = d
+        self.sections = cli.load_index()
+
+    def tearDown(self):
+        cli._ROOT_OVERRIDE = None
+        self._tmp.cleanup()
+
+    def sites_of(self, name):
+        return [(s.line, s.kind) for s in
+                sites.find_code_equations(self.sections, name)]
+
+    def test_an_operand_is_not_a_head(self):
+        self.assertEqual(self.sites_of("A"), [(7, "default")])
+
+    def test_an_argument_is_not_a_head(self):
+        self.assertEqual(self.sites_of("set"), [(5, "default")])
+
+    def test_an_abstract_equation_reads_one_level_in(self):
+        self.assertEqual(self.sites_of("mk"),
+                         [(15, "[code abstract]"), (18, "default")])
 
 
 if __name__ == "__main__":

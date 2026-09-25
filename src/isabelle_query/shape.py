@@ -74,7 +74,7 @@ from typing import NamedTuple
 from isabelle_query import graph
 from isabelle_query.model import Entry, TheorySection
 from isabelle_query.parsing import (
-    ISA_WORD_CHAR, PROOF_RE, _PROOF_INLINE_RE, _balanced_end)
+    ISA_WORD_CHAR, LETTER_SYMS, PROOF_RE, _PROOF_INLINE_RE, _balanced_end)
 from isabelle_query.graph import (
     CLOSING_KEYWORDS as _CLOSING_KEYWORDS,
     CONTEXT_KEYWORDS as _CONTEXT_KEYWORDS,
@@ -1472,19 +1472,6 @@ def classify_identifier(name: str, ctx: ClassifyCtx) -> tuple[str, str]:
 # the bound-variable axis), and numerals are not counted as constants.
 _ASCII_OP_CONSTS = frozenset("+-*/=<>@")
 _BINDER_SET = frozenset(_BINDER_SYMS)
-# Greek + variant **letter** symbols: these are identifier characters (a
-# `\<Gamma>` context, an `\<alpha>` ordinal), NOT operators — the tokeniser keeps
-# `\<alpha>` as a bare `\<sym>` because `_is_name` gates on an ASCII letter, so
-# without this set they would masquerade as operator constants.
-_LETTER_SYMS = frozenset({
-    "\\<alpha>", "\\<beta>", "\\<gamma>", "\\<delta>", "\\<epsilon>", "\\<zeta>",
-    "\\<eta>", "\\<theta>", "\\<iota>", "\\<kappa>", "\\<mu>", "\\<nu>", "\\<xi>",
-    "\\<pi>", "\\<rho>", "\\<sigma>", "\\<tau>", "\\<upsilon>", "\\<phi>",
-    "\\<chi>", "\\<psi>", "\\<omega>", "\\<varepsilon>", "\\<vartheta>",
-    "\\<varphi>", "\\<varrho>", "\\<varsigma>", "\\<varpi>",
-    "\\<Gamma>", "\\<Delta>", "\\<Theta>", "\\<Lambda>", "\\<Xi>", "\\<Pi>",
-    "\\<Sigma>", "\\<Upsilon>", "\\<Phi>", "\\<Psi>", "\\<Omega>",
-})
 # Exactly one `\<sym>` and nothing else (no `\<^ctrl>`, no glued word/subscript):
 # a spaced, standalone operator token.  `\<And>c_b` (binder+var), `\<Gamma>\<^sub>M`
 # (subscripted letter) and `x\<in>y` (unspaced) all fail this and so are not
@@ -1503,7 +1490,7 @@ def _is_operator_const(tok: str) -> bool:
         return True                       # ASCII arithmetic/relational operator
     if _SINGLE_SYM_RE.match(tok):         # a lone, spaced \<sym>
         return (tok not in _BRACKET_PAIRS and tok not in _CLOSERS
-                and tok not in _BINDER_SET and tok not in _LETTER_SYMS)
+                and tok not in _BINDER_SET and tok not in LETTER_SYMS)
     return False                          # punctuation, glued binders, letter subscripts
 
 
