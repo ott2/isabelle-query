@@ -796,5 +796,75 @@ class TheTransitiveCommand(SitesFixture):
                                 CmdFlags(recursive=True))
 
 
+# A proof command need not start a line.  Hand-read: `interpret` at 13 (after
+# `from assms`), 14 (after a whole `have ... by simp then`, whose `by` must not
+# cut the header short) and 15 (after `with assms`).  The decoys: a term that
+# spells `interpret` (23, blank in the outer view), a comment (24) and a fact
+# name that starts with the word (25).
+CHAIN_FIX = r'''theory Chain_Fix
+  imports Main
+begin
+
+locale ring0 =
+  fixes r :: "'a \<Rightarrow> 'a"
+  assumes ax: "r x = x"
+
+lemma chained:
+  assumes "ring0 r"
+  shows "True"
+proof -
+  from assms interpret a: ring0 r .
+  have "ring0 r" using assms by simp then interpret b: ring0 r .
+  with assms interpret c: ring0 r .
+  show ?thesis by simp
+qed
+
+lemma decoys:
+  assumes "ring0 r"
+  shows "True"
+proof -
+  have "ring0 r \<and> (interpret \<longleftrightarrow> interpret)" sorry
+  \<comment> \<open>then interpret d: ring0 r\<close>
+  note interpret_foo = assms
+  show ?thesis by simp
+qed
+
+end
+'''
+
+
+class MidLineInterpret(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        (d / "Chain_Fix.thy").write_text(CHAIN_FIX, encoding="utf-8")
+        (d / "ROOT").write_text(
+            "session Fix = HOL +\n  theories\n    Chain_Fix\n",
+            encoding="utf-8")
+        cli._ROOT_OVERRIDE = d
+        self.sections = cli.load_index()
+
+    def tearDown(self):
+        cli._ROOT_OVERRIDE = None
+        self._tmp.cleanup()
+
+    def test_a_chained_interpret_is_a_site(self):
+        found = sites.find_instantiations(self.sections, "ring0")
+        self.assertEqual([(s.line, s.kind, s.name) for s in found],
+                         [(13, "interpret", "a"), (14, "interpret", "b"),
+                          (15, "interpret", "c")])
+
+    def test_the_command_reader(self):
+        self.assertEqual(sites._inst_command("  then interpret x: L"),
+                         ("interpret", 7, 16))
+        self.assertEqual(sites._inst_command("  interpretation L"),
+                         ("interpretation", 2, 16))
+        for line in ("  note interpret_foo = a", "  using M.interpret",
+                     "interpret_foo", "  then show ?thesis"):
+            with self.subTest(line=line):
+                self.assertIsNone(sites._inst_command(line))
+
+
 if __name__ == "__main__":
     unittest.main()

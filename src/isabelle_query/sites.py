@@ -267,6 +267,48 @@ _INST_CMD_RE = re.compile(
     r"^(instantiation|instance|interpretation|global_interpretation|interpret"
     r"|sublocale)(?![\w'])")
 
+# `interpret` is a PROOF command, and a proof command need not start a line:
+# `then interpret`, `from assms(2) interpret`, `have ... by simp then
+# interpret` — about one AFP `interpret` in eight is written that way.
+# Searched on the OUTER view, where terms, text and comments are already
+# blank, so what is left standing at a word boundary is outer syntax; the
+# lookbehind keeps `M.interpret` and `interpret_foo` (fact names) out.  The
+# theory-level commands above are not searched mid-line: they follow a
+# finished command, which in practice means a new line.
+_MIDLINE_INTERPRET_RE = re.compile(r"(?<=\s)(interpret)(?![\w'.])")
+
+
+def _inst_command(outer_line: str) -> tuple[str, int, int] | None:
+    """``(command, start, end)`` columns of the instantiating command on this
+    OUTER line — at the line's start, else a mid-line ``interpret``."""
+    stripped = outer_line.lstrip()
+    m = _INST_CMD_RE.match(stripped)
+    if m:
+        lead = len(outer_line) - len(stripped)
+        return m.group(1), lead, lead + m.end()
+    m = _MIDLINE_INTERPRET_RE.search(outer_line)
+    if m:
+        return m.group(1), m.start(), m.end()
+    return None
+
+
+def _header_from(live: list[str], outer: list[str], line: int,
+                 col: int) -> tuple[str, str]:
+    """:func:`_header_at` for a command starting at column ``col``.
+
+    What precedes it on the line is a different command — `have "..." by
+    simp` before `then interpret` — whose `by` would otherwise stop the
+    header before it began.  Blanked to spaces rather than cut, so every
+    column offset into the first line still holds in both views.
+    """
+    if not outer[line - 1][:col].strip():
+        return _header_at(live, outer, line)
+    stop = line - 1 + HEADER_LINES
+    lv, ov = live[line - 1:stop], outer[line - 1:stop]
+    lv[0] = " " * col + lv[0][col:]
+    ov[0] = " " * col + ov[0][col:]
+    return _header_at(lv, ov, 1)
+
 # A name as WRITTEN at a use site — `_TARGET_NAME_RE`'s grammar, spelled out
 # so it can be embedded in a longer pattern.
 _USE_NAME = rf"(?:{ISA_MARKUP}|[A-Za-z_])(?:{ISA_MARKUP}|[\w'.])*"
@@ -500,14 +542,12 @@ def _instantiation_sites(sections: list[TheorySection], names: list[str],
         raw = sec.source()
         enclosing_name = _enclosing_lookup(sec, live, outer)
         for i in range(1, len(outer) + 1):
-            stripped = outer[i - 1].lstrip()
-            m = _INST_CMD_RE.match(stripped)
-            if not m:
+            cmd = _inst_command(outer[i - 1])
+            if cmd is None:
                 continue
-            command = m.group(1)
-            head_live, head_outer = _header_at(live, outer, i)
+            command, start, at0 = cmd
+            head_live, head_outer = _header_from(live, outer, i, start)
             # Past the command keyword, in both views at once.
-            at0 = len(outer[i - 1]) - len(stripped) + m.end()
             at = at0 + _marker_end(head_live[at0:])
             body_live = head_live[at:]
             body_outer = head_outer[at:]
