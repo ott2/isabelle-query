@@ -606,7 +606,10 @@ class TheCollisionFixture(unittest.TestCase):
 # declared constant (7), and `minus_set_fold`'s shape (9) is an equation of
 # `-`, whose left operand is `A`; `insert_code` (12) is one of `insert`, not
 # of the `set` in its argument; `set_abs` (15) is an abstract equation, which
-# IS one of the `mk` in the projection's argument.
+# IS one of the `mk` in the projection's argument.  `twin_a` / `twin_b`
+# (22-23) are two statements with an attribute each, one equation of `mk`
+# and one of `twin`, not two of each; `prem` (26) is an equation of `twin`,
+# its `and p:` a premise, not a second statement.
 MIXFIX_FIX = r'''theory Mixfix_Fix
   imports Main
 begin
@@ -625,6 +628,17 @@ lemma set_abs [code abstract]: "Rep_T (mk n) = set n"
   sorry
 
 definition mk :: "nat \<Rightarrow> nat" where "mk n = n"
+
+definition twin :: "nat \<Rightarrow> nat" where "twin n = n"
+
+lemma twin_a [code]: "mk n = n"
+  and twin_b [code]: "twin n = n"
+  sorry
+
+lemma prem [code]:
+  assumes "mk 0 = 0" and p: "True"
+  shows "twin n = n"
+  sorry
 
 end
 '''
@@ -657,8 +671,18 @@ class MixfixAttribution(unittest.TestCase):
         self.assertEqual(self.sites_of("set"), [(5, "default")])
 
     def test_an_abstract_equation_reads_one_level_in(self):
-        self.assertEqual(self.sites_of("mk"),
+        self.assertEqual(self.sites_of("mk")[:2],
                          [(15, "[code abstract]"), (18, "default")])
+
+    def test_each_statement_carries_its_own_attribute(self):
+        self.assertEqual(self.sites_of("mk"),
+                         [(15, "[code abstract]"), (18, "default"),
+                          (22, "[code]")])
+        found = sites.find_code_equations(self.sections, "twin")
+        self.assertEqual([(s.line, s.kind, s.name) for s in found],
+                         [(20, "default", "twin"),
+                          (23, "[code]", "twin_b"),
+                          (26, "[code]", "prem")])
 
 
 if __name__ == "__main__":

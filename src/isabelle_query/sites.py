@@ -1111,6 +1111,28 @@ def _lhs_head(lhs: str, abstract: bool) -> str:
     return inner[0] if inner else ""
 
 
+# A later statement of a multi-statement declaration: `lemma a [code]: "p"
+# and b [code]: "q"`.  Read on the OUTER view, where a term is blank, so the
+# `:` is the clause's own; `::` is a type constraint (`fun f and g :: ...`),
+# not a clause.
+_CLAUSE_RE = re.compile(
+    r"(?<![\w'])and\s+(?:([^\s\[:]+)\s*)?(?:\[[^\]]*\]\s*)?:(?!:)")
+
+
+def statement_clauses(outer: str) -> list[tuple[int, str]]:
+    """``(start, name)`` of each statement in a declaration header: the
+    first at 0 under the declaration's own name (``""`` here), then one per
+    ``and NAME [attrs]:``.  Only past the last ``shows`` when there is one:
+    before it, ``assumes "a" and b: "c"`` names a premise, not a statement.
+    """
+    shows = None
+    for shows in _SHOWS_RE.finditer(outer):
+        pass
+    at = shows.end() if shows else 0
+    return [(0, "")] + [(m.start(), m.group(1) or UNNAMED)
+                        for m in _CLAUSE_RE.finditer(outer, at)]
+
+
 def equation_heads(statement: str, abstract: bool = False) -> list[str]:
     """The constant at the head of each proposition's left-hand side --
     of the projection's argument, for an ``abstract`` equation."""
@@ -1304,19 +1326,31 @@ def find_code_equations(sections: list[TheorySection], name: str
                     subject_here = (e.tag in CONSTANT_TAGS
                                     and (e.name == name
                                          or name in e.bound_names))
+                    clauses = statement_clauses(head_outer)
                     for attr in attrs:
+                        # The statement the attribute is attached to, and
+                        # only that one: `lemma insert_code [code]: "..."
+                        # and union_code [code]: "..."` is two equations of
+                        # two constants, not two of each.
+                        k = max(j for j, (at, _n) in enumerate(clauses)
+                                if at <= attr.start)
+                        lo = clauses[k][0]
+                        hi = (clauses[k + 1][0] if k + 1 < len(clauses)
+                              else len(head_live))
                         if attr.config:
                             hit = any(denotes(c, name) for c in
                                       dropped_constants(head_live, attr))
                         else:
                             hit = (subject_here
-                                   or heads_denote(head_live, attr))
+                                   or heads_denote(head_live[lo:hi], attr))
                         if hit:
                             attributed = True
+                            line = e.thy_line + head_live.count("\n", 0, lo)
                             found.append(Site(
-                                sec.theory, sec.path, e.thy_line,
+                                sec.theory, sec.path, line,
                                 f"[{attr.spelling}]",
-                                raw[e.thy_line - 1].rstrip(), entry_name,
+                                raw[line - 1].rstrip(),
+                                clauses[k][1] or entry_name,
                                 written_type(head_live, head_outer, e.name)))
             # 2. The implicit default equations of the constant's own
             #    declaration -- unless the declaration ITSELF carries a code
