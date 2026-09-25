@@ -100,11 +100,10 @@ sites alone.
 symbol**: an equation of an operator (`"Ratreal x + Ratreal y = ..."`,
 `"xs @ ys = ..."`) names no constant at its head, and is not listed under the
 operator or under an operand. Check source with `grep` if an answer looks
-short. Neither verb
-separates same-named declarations that are both visible from one theory: a
-site is attributed to a declaration in that theory or its transitive imports
-within the scanned project, and declarations that live only in a heap are not
-discovered.
+short. Neither verb separates same-named declarations that are both visible
+from one theory: a site is attributed to a declaration in that theory or its
+transitive imports within the scanned project, and declarations that live only
+in a heap are not discovered.
 
 ## Proof-shape metrics
 
@@ -224,5 +223,5 @@ pip install -e .
 
 ## Authors & license
 
-By András Salamon, with Claude Opus 4.6, 4.7, 4.8, and 5.
+By András Salamon, with Claude Opus 4.6, 4.7, 4.8, 5, and 5.5.
 `instances` and `codeqs` by David Wang, with Claude Fable 5.1. [MIT](LICENSE).

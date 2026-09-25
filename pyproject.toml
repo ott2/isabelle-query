@@ -9,7 +9,7 @@ description = "Query the live theory index of an Isabelle/Isar project — entri
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-# Authored by András Salamon, with Claude Opus 4.6, 4.7, 4.8, and 5.
+# Authored by András Salamon, with Claude Opus 4.6, 4.7, 4.8, 5, and 5.5.
 # `instances` and `codeqs` by David Wang, with Claude Fable 5.1 — a
 # contributor, credited here and in README.md but not listed in `authors`.
 authors = [

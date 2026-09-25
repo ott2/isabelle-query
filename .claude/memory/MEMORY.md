@@ -1,7 +1,7 @@
 # Memory index
 
 - [András Salamon (user)](user-andras-salamon.md) — Isabelle/Isar complexity-theory researcher who builds his own tooling
-- [Authorship credit](authorship-credit.md) — credit "András Salamon, with Claude Opus 4.6, 4.7, 4.8, and 5" on isabelle-query artifacts
+- [Authorship credit](authorship-credit.md) — credit "András Salamon, with Claude Opus 4.6, 4.7, 4.8, 5, and 5.5" on isabelle-query artifacts
 - [Speed and accuracy over correctness](speed-and-accuracy-over-correctness.md) — young code, expect change; don't keep flagging breakage risk
 - [isabelle-query correctness approach](isabelle-query-correctness-approach.md) — verify against Isabelle semantics not old behavior; oracle tests + @expectedFailure corner-case catalogue
 - [Small frequent commits](small-frequent-commits.md) — split by concern into small semantically-coherent commits; hunk-split via git apply --cached

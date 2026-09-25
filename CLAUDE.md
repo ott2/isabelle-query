@@ -105,7 +105,7 @@ matter every session:
   green after every change.
 - **Commits.** Small, single-concern, frequent — commit often, don't push unless
   asked. Trailer, verbatim:
-  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
+  `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
   Write commit bodies to a `.commit-msg` scratch file in the working tree (not
   `/tmp`, which is gated); `rm` it after.
 - **Reuse over re-roll.** Corpus/tooling scans reuse `cli._parse_one` +
@@ -144,7 +144,7 @@ to PyPI, not the assistant: it is the one step here that cannot be undone.
 ## Credit
 
 **Published artifacts** carry the line "By András Salamon, with Claude Opus
-4.6, 4.7, 4.8, and 5." — `README.md`'s sign-off and `pyproject.toml`'s author
+4.6, 4.7, 4.8, 5, and 5.5." — `README.md`'s sign-off and `pyproject.toml`'s author
 comment are the two places it belongs.
 
 **Outside contributions get their own line**, naming the contribution rather
