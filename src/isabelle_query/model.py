@@ -429,3 +429,7 @@ class CmdFlags:
     # theory can SEE; "name" is the old name-only matching, kept so a
     # corpus-scale delta can be measured against the numbers it replaces.
     reach: str = "closure"
+    # --sorts (instances / codeqs): re-spell the name cell as `c :: T` with
+    # the sort / arity / signature the SOURCE writes at that site.  Written
+    # text only — a site whose source writes none shows none.
+    sorts: bool = False

@@ -42,6 +42,7 @@ if str(_SRC) not in sys.path:
 from isabelle_query import cli  # noqa: E402
 from isabelle_query import _namespace_resolve as _nsr  # noqa: E402
 from isabelle_query import graph  # noqa: E402
+from isabelle_query.parsing import _balanced_end  # noqa: E402
 
 
 # The import-time default is the BROAD committed union, which already carries
@@ -115,6 +116,32 @@ def names(section):
 def tags_by_name(section):
     """Map ``{name: tag}`` for a section's entries."""
     return {e.name: e.tag for e in section.entries}
+
+
+def blank_terms(s):
+    r"""The outer view of a one-line header, simulated: every `"..."` term and
+    `\<open>...\<close>` cartouche blanked to spaces, which is what
+    `TheorySection.outer_source` does to the same characters.  For pinning
+    the site grammars (`sites.expression_heads`, `sites.code_attrs`, ...) on
+    strings: each takes the live text and the outer text of one span."""
+    out = []
+    i = 0
+    quoted = False
+    while i < len(s):
+        c = s[i]
+        if c == '"':
+            quoted = not quoted
+            out.append(" ")
+            i += 1
+        elif not quoted and s.startswith("\\<open>", i):
+            e = _balanced_end(s, "\\<open>", "\\<close>", start=i)
+            stop = len(s) if e < 0 else e
+            out.append(" " * (stop - i))
+            i = stop
+        else:
+            out.append(" " if quoted else c)
+            i += 1
+    return "".join(out)
 
 
 _ANTIQ_RE = re.compile(r'@\{(?:text|thm|term|const)\s+["\']?\w+["\']?\}')

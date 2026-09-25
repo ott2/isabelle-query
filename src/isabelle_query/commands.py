@@ -51,6 +51,7 @@ from isabelle_query.graph import (
     _shadowed_uses_on_line,
 )
 from isabelle_query import graph as _graph
+from isabelle_query import sites as _sites
 from isabelle_query.render import (
     _emit_matches,
     _format_extent,
@@ -62,6 +63,7 @@ from isabelle_query.render import (
     file_locus,
     locus_labels,
     render_entry,
+    theory_locus,
 )
 
 
@@ -912,7 +914,12 @@ def _find_callers(sections: list[TheorySection], name: str,
     text_ranges = _noise_ranges(sections)
     # Read late: the namespace table is bound by the CLI after import.
     shadowed = name in _graph._NON_CITATION
-    vis = _graph._Visibility(sections, reach)
+    # A name an entry BINDS is a declaration of it here [bound-name-reach]:
+    # `callers Bar` for a constructor is scoped to the theories that can see
+    # the datatype, as it is for an entry.  The bulk graph does not do this
+    # (it has no bound-name nodes), so `callers -r` / `callees` / `refs` /
+    # `unused` totals are untouched.
+    admits = _graph.site_filter(sections, name, reach)
 
     results: list[tuple[TheorySection, int, str]] = []
     for sec in sections:
@@ -922,7 +929,7 @@ def _find_callers(sections: list[TheorySection], name: str,
             continue
         # Whole-theory visibility, tested once rather than per line: the
         # question is about the theory, not the site.
-        if not vis.sees(sec.theory, name):
+        if not admits(sec.theory):
             continue
         # Decide on the redacted view, report the raw one: a mention inside a
         # comment / `\<^cancel>` / inline ML body is not a use even when live
@@ -1291,6 +1298,152 @@ def cmd_enclosing(sections: list[TheorySection], loci: list[str],
             scope = f"{thy} ▸ {target}" if target else thy
             print(f"{loc} → {e.name} ({e.tag}) — {scope} "
                   f"{_format_extent(e)}")
+
+
+@dataclass
+class _SiteSubject:
+    """A resolved `instances` / `codeqs` subject.
+
+    ``how`` is non-empty when the name is one Isabelle MINTED rather than one
+    the author wrote as a declaration name — a datatype constructor, a `shows`
+    conjunct — resolved through the same bindings `_resolve_binding` reads.
+    The SUBJECT stays the typed name: a code equation is about the
+    constructor `Cons`, not about the `datatype list` that binds it.
+    """
+    name: str
+    tag: str
+    theory: str
+    entry: Entry
+    how: str = ""
+
+
+def _resolve_site_subject(sections: list[TheorySection], name: str,
+                          tags: frozenset[str], what: str
+                          ) -> _SiteSubject | str:
+    """The subject a site verb asks about, or the reason it cannot be asked.
+
+    EVERY entry of that name is considered, not the first: a project
+    routinely declares the same word twice (`rev` is a `primrec` in `List`
+    and a locale-local LEMMA in `Groups_List`), and taking whichever came
+    first turned a perfectly good subject into "is a LEMMA, not a constant".
+    The right-kinded declaration wins; the wrong-kinded one is only what the
+    diagnostic names.  Then a bound name whose BINDER is right-kinded (`Leaf`
+    resolves because `datatype mytree` is a constant declaration); then the
+    refusal.  No case folding and no substring fallback, unlike `show`.
+    """
+    found = [(sec.theory, e) for sec in sections for e in sec.entries
+             if e.name == name]
+    for theory, e in found:
+        if e.tag in tags:
+            return _SiteSubject(name, e.tag, theory, e)
+    for sec in sections:
+        for e in sec.entries:
+            if e.tag not in tags:
+                continue
+            for n, kind in e.bindings:
+                if n == name:
+                    how = _BINDING_KINDS.get(kind, "bound by")
+                    return _SiteSubject(name, e.tag, sec.theory, e,
+                                        f"{how} {e.name}")
+    if found:
+        theory, e = found[0]
+        return f"'{name}' is a {e.tag} in {theory}, not {what}"
+    return f"'{name}' is not {what} declared in this project"
+
+
+def _with_site_subject(sections: list[TheorySection], name: str,
+                       tags: frozenset[str], what: str) -> _SiteSubject:
+    """Resolve the subject or exit — the lookup family's contract one level
+    in.  A subject the project does not declare is NOT an honest zero: the
+    scan would find nothing for a typo and nothing for a locale declared in
+    an imported session, and the caller could not tell either from a locale
+    that genuinely has no instantiations.  A KNOWN subject with no sites
+    keeps the honest zero, the same message shape and exit 0 `callers` gives
+    an entry nothing calls.
+
+    The `# 'X' is ...` note is printed here, ahead of the mode switch, so it
+    appears in every mode — as `callers -r` already does for a bound name.
+    """
+    got = _resolve_site_subject(sections, name, tags, what)
+    if isinstance(got, str):
+        _fail_subject(got)
+        raise SystemExit(EXIT_UNRESOLVED)  # unreachable; keeps the type honest
+    if got.how:
+        print(f"# '{name}' is {got.how}.")
+    return got
+
+
+def _emit_sites(sections: list[TheorySection],
+                rows: list[tuple[_sites.Site, str]], name: str, noun: str,
+                flags: 'CmdFlags', transitive: bool = False) -> None:
+    """One renderer for both site verbs: LOCUS, NAME, KIND, [VIA,] source.
+
+    The name sits exactly where `callers` and `methods` put their owning
+    entry, and the locus stays FIRST, which is what lets the first field of
+    every row be cut out with `awk '{print $1}'` and handed to `enclosing`,
+    and what `--names` prints on its own: for a SITE list the identity of a
+    hit IS its locus, and `theory:line` is the tool's own span grammar.
+
+    The locus is the qualified, suffix-free label (`render.theory_locus` of
+    the site's own path) computed from one label map per run: a site is
+    reported at a theory, the way a caller is, and on a corpus with two
+    `Examples` the bare theory name was the one spelling `enclosing` could
+    not resolve back to the row.
+
+    The VIA column exists only under ``transitive``: without `-r` every row
+    is a site of the subject, and a column repeating its name on every line
+    would be noise — so the default listing is four columns, byte for byte.
+    """
+    sites = [s for s, _via in rows]
+    if flags.mode == "count":
+        print(len(sites))
+        return
+    labels = locus_labels(sections)
+    loci = [f"{theory_locus(labels, s.path)}:{s.line}" for s in sites]
+    if flags.mode == "names":
+        for loc in loci:
+            print(loc)
+        return
+    if not sites:
+        print(f"No {noun}s found for '{name}'.")
+        return
+    names = [s.label(flags.sorts) for s in sites]
+    vias = [via for _s, via in rows]
+    loc_w = max(len(loc) for loc in loci)
+    name_w = max(len(n) for n in names)
+    kind_w = max(len(s.kind) for s in sites)
+    via_w = max(len(v) for v in vias) if transitive else 0
+    print(f"{len(sites)} {noun}(s) of {name}"
+          f"{' (transitive)' if transitive else ''}:\n")
+    for s, label, loc, via in zip(sites, names, loci, vias):
+        via_cell = f"{via:<{via_w}}  " if transitive else ""
+        print(f"  {loc:<{loc_w}}  {label:<{name_w}}  {s.kind:<{kind_w}}  "
+              f"{via_cell}{s.text.strip()}")
+
+
+def cmd_instances(sections: list[TheorySection], name: str,
+                  flags: 'CmdFlags') -> None:
+    """Where a locale or class is instantiated: the declared source sites."""
+    _with_site_subject(sections, name, _sites.LOCALE_TAGS,
+                       "a locale or class")
+    # `-r` widens WHAT is asked about, not what counts as an answer: the
+    # resolution and the exit contract are the same question either way, so
+    # a subject with no transitive sites is the honest zero and an unknown
+    # one is still a refusal.
+    if flags.recursive:
+        rows = _sites.find_instantiations_transitive(sections, name)
+    else:
+        rows = [(s, "") for s in _sites.find_instantiations(sections, name)]
+    _emit_sites(sections, rows, name, "instantiation", flags,
+                transitive=flags.recursive)
+
+
+def cmd_codeqs(sections: list[TheorySection], name: str,
+               flags: 'CmdFlags') -> None:
+    """Declared code-equation sites of a constant."""
+    _with_site_subject(sections, name, _sites.CONSTANT_TAGS, "a constant")
+    rows = [(s, "") for s in _sites.find_code_equations(sections, name)]
+    _emit_sites(sections, rows, name, "code equation", flags)
 
 
 def cmd_callers(sections: list[TheorySection], name: str,

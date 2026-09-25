@@ -528,8 +528,17 @@ class _Visibility:
     is the failure this filter exists to avoid making.
     """
 
-    def __init__(self, sections: list[TheorySection], mode: str = "closure"):
+    def __init__(self, sections: list[TheorySection], mode: str = "closure",
+                 *, bound_names: bool = False, memo_closures: bool = False):
         self.mode = mode
+        # One closure at a time (the class docstring), unless the caller says
+        # its walk ALTERNATES theories: the hierarchy walk behind
+        # `instances -r` asks about the theory each edge is written in, in
+        # edge order, and a single slot then recomputes the same closure once
+        # per edge.  A per-theory dict is bounded by the corpus and lives no
+        # longer than the request that asked for it.
+        self._closures: dict[str, frozenset[str] | None] | None = (
+            {} if memo_closures else None)
         self.by_theory = _sections_by_theory(sections)
         self._leaf = _leaf_index(self.by_theory)
         # theory -> EVERY section of that name, not the last-wins one.  A
@@ -548,10 +557,23 @@ class _Visibility:
         # filtered: `sees` is asked about tokens the caller already believes
         # are citable, and inventing an answer for one the project does not
         # declare would drop a real use.
+        #
+        # With ``bound_names``, the names an entry BINDS count as declarations
+        # too [bound-name-reach]: a datatype constructor, a `shows` conjunct, a
+        # mutually declared constant.  Isabelle binds `Bar` in the theory that
+        # writes `datatype colour = Bar | Baz`, and a theory that does not
+        # import it cannot write that `Bar` either — so a single-name scan
+        # (`callers Bar`, and the site verbs) scopes it like any entry.  Off by
+        # default because the bulk call graph has no such nodes: its name set
+        # is entries only, and giving its visibility a wider declared set than
+        # its node set would change nothing it reports while costing a pass.
         self.declared_in: dict[str, set[str]] = {}
         for sec in sections:
             for e in sec.entries:
                 self.declared_in.setdefault(e.name, set()).add(sec.theory)
+                if bound_names:
+                    for n in e.bound_names:
+                        self.declared_in.setdefault(n, set()).add(sec.theory)
 
     def _read_imports(self, theory: str) -> list[str] | None:
         """The in-project imports of EVERY section of this name, unioned, or
@@ -585,6 +607,8 @@ class _Visibility:
     def closure(self, theory: str) -> frozenset[str] | None:
         """``{theory} | its transitive in-project imports``, or None if any
         header on the walk could not be read — see the class docstring."""
+        if self._closures is not None and theory in self._closures:
+            return self._closures[theory]
         if self._closure is not None and self._closure[0] == theory:
             return self._closure[1]
         unknown = False
@@ -600,6 +624,8 @@ class _Visibility:
         depths = _bfs_depths(children, [theory], seed_depth=-1)
         reach = None if unknown else frozenset(depths) | {theory}
         self._closure = (theory, reach)
+        if self._closures is not None:
+            self._closures[theory] = reach
         return reach
 
     def sees(self, theory: str, name: str) -> bool:
@@ -615,6 +641,50 @@ class _Visibility:
         if reach is None:
             return True                 # unknown closure: do not drop an edge
         return not decl.isdisjoint(reach)
+
+
+def site_filter(sections: list[TheorySection], name: str,
+                reach: str = "closure", *,
+                vis: "_Visibility | None" = None) -> Callable[[str], bool]:
+    """Which theories a single-name scan may report a hit for ``name`` in.
+
+    The per-theory predicate behind `callers`, `instances` and `codeqs`: the
+    :class:`_Visibility` rule with bound names counted as declarations
+    [bound-name-reach], packaged as ``admits(theory) -> bool`` so a scan can
+    test a whole section once and skip it before touching its source.
+
+    Always true under ``reach="name"``, and equally when the project declares
+    ``name`` NOWHERE — a token this project does not declare is a mention of
+    something external, which no import closure has an opinion about.  That
+    undeclared case is decided BEFORE any closure is built, and the ordering
+    is the difference between a cheap verb and an expensive one: building a
+    closure reads theory headers, and `callers <some token>` on a word the
+    project never declares needs none of it.
+
+    A caller asking about MANY names in one request (`instances -r`, over a
+    hierarchy) passes one ``vis`` built with ``bound_names=True`` and shares
+    it: a fresh instance per name re-indexes every entry and re-reads every
+    theory header through its own imports memo, which over the distribution's
+    `src/HOL` turned a 6 s request into 90 s.
+    """
+    if reach != "closure":
+        return lambda theory: True
+    if vis is not None:
+        if name not in vis.declared_in:
+            return lambda theory: True
+        return lambda theory: vis.sees(theory, name)
+    declared = False
+    for sec in sections:
+        for e in sec.entries:
+            if e.name == name or name in e.bound_names:
+                declared = True
+                break
+        if declared:
+            break
+    if not declared:
+        return lambda theory: True
+    vis = _Visibility(sections, reach, bound_names=True)
+    return lambda theory: vis.sees(theory, name)
 
 
 def _build_call_graph(sections: list[TheorySection],
