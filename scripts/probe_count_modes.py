@@ -49,6 +49,9 @@ CASES = [
     ("show", ["show", "-c", "zzz"], "zero"),
     ("grep", ["grep", "-c", "zzz"], "zero"),
     ("unused", ["unused", "-c"], "zero"),
+    ("unused --locals", ["unused", "--locals", "-c"], "zero"),
+    # An entry selector names an entry that must exist, like a subject.
+    ("unused T:zzz", ["unused", "--locals", "-c", "T:zzz"], "unknown"),
     ("sorry", ["sorry", "-c"], "zero"),
     # `callers` looks like the odd one out and is not: it SCANS source for a
     # token, so "zero mentions" is a truthful answer whether or not the name is

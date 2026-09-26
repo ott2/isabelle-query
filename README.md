@@ -34,6 +34,7 @@ query refs <theory>        # what a theory cites, by owning theory (citation-lev
 query graph [citation|imports]  # the whole graph as JSON (-f dot for Graphviz)
 query sorry                # outstanding sorry's
 query unused               # dead-code / unused-entry analysis
+query unused --locals [PATH]  # proof-local names (`have x:`, `let ?x`) nothing reads
 query instances <name> [-r]  # where a locale/class is instantiated; -r walks the hierarchy
 query codeqs <name>        # declared code-equation sites of a constant
 query shape <view>         # proof-shape metrics (summary|steps|lemma|widest|census)
@@ -104,6 +105,26 @@ short. Neither verb separates same-named declarations that are both visible
 from one theory: a site is attributed to a declaration in that theory or its
 transitive imports within the scanned project, and declarations that live only
 in a heap are not discovered.
+
+### Unread proof-local names
+
+`unused --locals` asks `unused`'s question one level down, inside a proof: which
+`have NAME:`, `obtain … where NAME:`, `note NAME =`, `define NAME` or `let ?NAME`
+binds a name that nothing in its scope reads — the litter a copied-then-trimmed
+proof leaves behind. It follows Isar's scoping (a name bound inside `proof … qed`
+or after `next` is invisible outside it) and binding time (`have a: … using a`
+cites the *previous* `a`). A label whose fact is consumed by `then` / `moreover`
+/ `ultimately`, or declared by `[simp]`, is used and never reported.
+
+```sh
+query unused --locals Foo.thy:120..260   # the proofs a diff hunk touches
+query unused --locals Foo:bar_lemma      # one proof
+```
+
+The rows are **candidates, not a delete list**: a fact read through a bundle
+cited under another name, by `case` position (`1(2)`), by its statement
+(`‹P›`), or by an `obtain`'s hand-written `that` is invisible to the scan.
+`--keep` names the deliberate ones.
 
 ## Proof-shape metrics
 

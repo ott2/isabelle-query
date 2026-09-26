@@ -168,6 +168,7 @@ from isabelle_query.commands import (  # noqa: F401  (re-exported for the facade
     cmd_graph,
     cmd_grep,
     _dot_quote,
+    _fail_subject,
     cmd_instances,
     cmd_largest,
     cmd_lines,
@@ -179,6 +180,7 @@ from isabelle_query.commands import (  # noqa: F401  (re-exported for the facade
     cmd_summary,
     cmd_theory,
     cmd_unused,
+    cmd_unused_locals,
 )
 # The `shape` proof-metrics command family, extracted to `shape_cmds.py` (it
 # sits above `commands` — reusing `_parse_locus` / `_resolve_theory` — and below
@@ -875,8 +877,74 @@ def _run_callees(ns: argparse.Namespace) -> None:
     flags = _flags_from_ns(ns)
     _run_each(ns, "name", lambda secs, n: cmd_callees(secs, n, flags))
 
+# `THEORY:NAME` — an entry selector for `unused --locals`, the one place a PATH
+# may name an entry rather than a line window.
+_ENTRY_SELECTOR_RE = re.compile(r"^(.+):([A-Za-z][\w'.]*)$")
+
+
+def _usage_error(msg: str) -> None:
+    print(f"{_prog_name()}: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
 def _run_unused(ns: argparse.Namespace) -> None:
-    cmd_unused(_load_sections(ns), _flags_from_ns(ns))
+    flags = _flags_from_ns(ns)
+    files = list(getattr(ns, "files", None) or [])
+    if not ns.locals:
+        # Entry-level deadness is a question about the whole citation graph,
+        # so it scopes with -R and never with a file subset (CONTRIBUTING.md).
+        if files:
+            _usage_error("unused: PATH arguments need --locals; entry-level "
+                         "`unused` is corpus-wide, scope it with -R")
+        cmd_unused(_load_sections(ns), flags)
+        return
+    if flags.recursive or flags.roots:
+        _usage_error("unused: --locals takes neither -r nor --roots")
+    if not files:
+        cmd_unused_locals(load_index(), flags)
+        return
+    sections, windows = _locals_selection(files)
+    cmd_unused_locals(sections, flags, windows)
+
+
+def _locals_selection(files: list[str]
+                      ) -> tuple[list[TheorySection], dict[Path, list]]:
+    """Sections and per-file proof windows for `unused --locals PATH...`.
+
+    Each PATH is what the search family takes, plus two selectors: a line
+    window (`Foo:120..260`, `Foo:412` — grep's grammar, so a span from
+    `largest` or a locus from `sorry` pastes in) and an entry name
+    (`Foo:bar_lemma`).  Both pick the PROOFS they touch, never single lines.
+    Two selectors on one file add up; a bare file anywhere takes all of it.
+    """
+    sections: list[TheorySection] = []
+    by_path: dict[Path, TheorySection] = {}
+    windows: dict[Path, list] = {}
+    whole: set[Path] = set()
+    for token in files:
+        entry_name = None
+        m = _ENTRY_SELECTOR_RE.match(token)
+        if (m and _parse_locus(token) is None
+                and not Path(token).expanduser().exists()):
+            token, entry_name = m.group(1), m.group(2)
+        for sec in _load_sections(argparse.Namespace(files=[token]),
+                                  parse="syntax", windows=True):
+            key = sec.path.resolve()
+            if key not in by_path:
+                by_path[key] = sec
+                sections.append(sec)
+            path = by_path[key].path
+            if entry_name is not None:
+                hits = [e for e in sec.entries if e.name == entry_name]
+                if not hits:
+                    _fail_subject(f"no entry '{entry_name}' in {token}")
+                windows.setdefault(path, []).extend(
+                    (e.src_start, e.body_end_line or e.thy_end) for e in hits)
+            elif sec.line_window is not None:
+                windows.setdefault(path, []).append(sec.line_window)
+            else:
+                whole.add(path)
+    return sections, {p: w for p, w in windows.items() if p not in whole}
 
 def _run_methods(ns: argparse.Namespace) -> None:
     cmd_methods(_load_sections(ns), ns.name, _flags_from_ns(ns))
@@ -1434,6 +1502,22 @@ def _build_parser() -> argparse.ArgumentParser:
                         "unused, and stop the cascade at them).  Repeatable, "
                         "or pass a comma-separated list.  Use for AFP-headline "
                         "theorems and other intentional zero-caller entries.")
+    p.add_argument("--locals", action="store_true",
+                   help="one level down: proof-local names (`have NAME:`, "
+                        "`obtain ... where NAME:`, `note NAME =`, `define`, "
+                        "`let ?NAME`) that nothing in their scope reads.  "
+                        "PATHs narrow it, as a file, `THY:A..B` / `THY:LINE` "
+                        "(the proofs that span touches) or `THY:ENTRY`.  "
+                        "CANDIDATES, not a delete list: a fact used through a "
+                        "bundle, by `case` position (`1(2)`), by its statement "
+                        "(`‹P›`) or by an `obtain`'s hand-written `that` is "
+                        "invisible to it; --keep names the deliberate ones.  A label whose fact "
+                        "is chained (`then`, `moreover`, ...) or declared "
+                        "(`[simp]`) is used, and never reported")
+    p.add_argument("files", nargs="*", metavar="PATH",
+                   help="with --locals only: the files, theories or "
+                        "`THY:A..B` / `THY:ENTRY` selections to scan "
+                        "(default: the whole project)")
     _add_drop_names_flag(p)
     _add_reach_flag(p)
     p.set_defaults(func=_run_unused)

@@ -52,6 +52,7 @@ from isabelle_query.graph import (
 )
 from isabelle_query import graph as _graph
 from isabelle_query import sites as _sites
+from isabelle_query.proof_locals import unread_locals
 from isabelle_query.render import (
     _emit_matches,
     _format_extent,
@@ -1873,6 +1874,35 @@ def cmd_unused(sections: list[TheorySection], flags: 'CmdFlags') -> None:
                     unused_entries.append((sec.theory, e, unused_map[e.name]))
 
     _render_unused(unused_entries, flags, flags.recursive)
+
+
+def cmd_unused_locals(sections: list[TheorySection], flags: 'CmdFlags',
+                      windows: "dict[Path, list] | None" = None) -> None:
+    """``unused --locals``: proof-local names bound and never read (issue
+    #12).  One row per binding — ``LOCUS NAME KIND ENTRY`` — in source order;
+    the scan and its caveats are :mod:`isabelle_query.proof_locals`'."""
+    rows = unread_locals(sections, windows, flags.keep)
+    if flags.mode == "count":
+        print(len(rows))
+        return
+    if not rows:
+        print("No unread local names found.")
+        return
+    labels = locus_labels(sections)
+    if flags.by_theory:
+        counts = Counter(labels.get(sec.path, sec.theory) for sec, _ in rows)
+        print(f"{len(rows)} unread local names across {len(counts)} "
+              f"theories:\n")
+        for thy, n in counts.most_common():
+            print(f"  {n:4d}  {thy}")
+        return
+    cells = [(f"{labels.get(sec.path, sec.theory)}:{b.line}", b.name, b.kind,
+              b.entry) for sec, b in rows]
+    w0 = max(len(c[0]) for c in cells)
+    w1 = max(len(c[1]) for c in cells)
+    w2 = max(len(c[2]) for c in cells)
+    for locus, name, kind, entry in cells:
+        print(f"{locus:<{w0}}  {name:<{w1}}  {kind:<{w2}}  {entry}")
 
 
 def _grep_sections(sections: list[TheorySection], pat: re.Pattern
