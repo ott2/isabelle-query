@@ -2715,10 +2715,16 @@ def _parse_one(thy: str, thy_path: Path,
     # would silently answer as if the theory had no comments at all.
     sec_for_extent = TheorySection(thy, thy_path, entries, thy_lines=len(lines),
                                    nonisar_ranges=nonisar_ranges)
+    # Terms AND comments blanked: the block structure `_proof_extent` reads
+    # must not see a `qed` in a comment or a `.` in a term.
+    outer_live = blank_all(outer, nonisar_spans)
+    prose_body = _line_mask(len(lines), [(lo + 1, hi) for lo, hi in text_blocks
+                                         if hi > lo])
     sec_for_extent._source_cache = lines
     for e in entries:
         if e.proof_line:
-            e.body_end_line = _proof_extent(sec_for_extent, e.proof_line, e.thy_end)
+            e.body_end_line = _proof_extent(sec_for_extent, e.proof_line,
+                                            e.thy_end, outer_live, prose_body)
         else:
             e.body_end_line = e.decl_end_line or e.thy_line
     sec = TheorySection(thy, thy_path, entries, thy_lines=len(lines),
@@ -2890,10 +2896,79 @@ def sections_for_session(session: SessionInfo,
     return sections
 
 
-def _proof_extent(sec: TheorySection, proof_line: int, thy_end: int) -> int:
+# The words and marks that open or close a block of a proof, read in command
+# position on the outer view.  A dot FOLLOWED by a name character is inside a
+# qualified name (`Suc.IH`, `local.x`, `INV.\<Phi>o_def`); one after a name is
+# a terminator, as Isabelle lexes it — `unfolding foo..` and `using bar.` close
+# their goals, and `qed.` is `qed` then `.`.  `?proof` is a schematic
+# variable, not the command.
+_PROOF_STRUCT_RE = re.compile(
+    r"(?<![\w'.?])(proof|qed|subgoal|by|done|sorry|oops)(?![\w']|\.[\w\\])"
+    r"|(?<!\.)(\.\.|\.)(?![\w'.\\])|([{}()\[\]])")
+_PROOF_TERMINATORS = frozenset({"by", "done", "sorry", "oops", ".", ".."})
+
+
+def _proof_close_line(outer: list[str], proof_line: int, thy_end: int) -> int:
+    """The line on which the proof starting at *proof_line* closes its goal,
+    or 0 when the walk reaches *thy_end* without seeing it close.
+
+    Block structure alone: `proof` / `{` / `subgoal` open, `qed` / `}` close,
+    and a terminator (`by`, `done`, `.`, `..`, `sorry`, `oops`) at the entry's
+    own level closes its goal — deeper, it closes a nested goal, or the
+    `subgoal` it ends.  Words inside parentheses or brackets are method and
+    attribute arguments, never structure.  *outer* must have terms AND
+    comments blanked.  `proof_locals` walks the same structure and records the
+    same line as `proof_end`; `tests/test_unused_locals.py` holds them equal.
+    """
+    kinds: list[str] = []          # open blocks above the entry's own goal
+    nest = 0
+    for ln in range(proof_line, min(thy_end, len(outer)) + 1):
+        for m in _PROOF_STRUCT_RE.finditer(outer[ln - 1]):
+            word, mark = m.group(1) or m.group(2), m.group(3)
+            if mark:
+                if mark in "([":
+                    nest += 1
+                elif mark in ")]":
+                    nest = max(0, nest - 1)
+                elif nest == 0 and mark == "{":
+                    kinds.append("{")
+                elif nest == 0 and kinds:            # "}"
+                    kinds.pop()
+                continue
+            if nest:
+                continue
+            if word in ("proof", "subgoal"):
+                kinds.append(word)
+            elif word == "qed":
+                if kinds:
+                    kinds.pop()
+                if not kinds:
+                    return ln
+                if kinds[-1] == "subgoal":
+                    kinds.pop()
+            elif word in _PROOF_TERMINATORS:
+                if not kinds:
+                    return ln
+                if kinds[-1] == "subgoal":
+                    kinds.pop()
+    return 0
+
+
+def _proof_extent(sec: TheorySection, proof_line: int, thy_end: int,
+                  outer: list[str] | None = None,
+                  prose: bytearray | None = None) -> int:
     r"""Walk forward from proof_line, return last line that belongs to the proof.
     Stops at `text \<open>...` blocks, section headers, next declarations, or
     end of file.  Returns proof_line itself for one-line proofs.
+
+    A `text` block or heading ends the proof only once the proof has CLOSED
+    [body-end-text].  Both are legal in proof mode, and stopping at the first
+    one cut 302 AFP proofs short (0.10%, ~60,700 lines) — every one of them
+    long, since a proof with a remark in its middle is a proof big enough to
+    want one — and the `shape` step scan and `enclosing` saw only the part
+    above it.  *outer* (terms and comments blanked) supplies the block
+    structure, via :func:`_proof_close_line`; where that walk never sees the
+    proof close, or no view is given, the boundary stands as before.
 
     A boundary **written inside a comment is not a boundary** — 248 of the
     AFP's 295,775 proofs stopped at one [proof-extent-view]: 231 at a
@@ -2931,6 +3006,15 @@ def _proof_extent(sec: TheorySection, proof_line: int, thy_end: int) -> int:
     """
     lines = sec.source()
     noise = _line_mask(len(lines), sec.nonisar_ranges)
+    # *prose* masks each `text` block's BODY, where "lemma reduction1 ..." at
+    # the start of a line is English.  Unreachable while every `text` ended the
+    # proof; reachable now that one inside a proof does not.  A block's first
+    # line stays unmasked: that is where the command itself is recognised.
+    if prose is None:
+        prose = bytearray(len(lines) + 2)
+    # Where the proof closes, asked only when a prose boundary is reached: few
+    # proofs meet one, and walking every proof's structure doubled parse time.
+    closes: int | None = None
     last = proof_line
     for line_no in range(proof_line + 1, thy_end + 1):
         if line_no > len(lines):
@@ -2941,18 +3025,24 @@ def _proof_extent(sec: TheorySection, proof_line: int, thy_end: int) -> int:
             # Stop at top-level documentation blocks (text \<open>...\<close>)
             # but NOT at in-proof Isar annotations (\<comment> \<open>...
             # \<close>), which are routine inside proof bodies.
-            if (stripped.startswith("text ")
-                    or stripped.startswith("text\\<open>")):
-                break
             # `_heading_at`, not a regex of its own: this was a THIRD asker of
             # "is this a heading", and it disagreed — a marked heading and a
             # split heading both ended a proof for `outline` and the prose mask
             # but not here.  7 lines over 2.36M in the AFP, so the size of the
             # disagreement is not the argument; having three recognisers where
             # the comments promise one is.
-            if _heading_at(lines, line_no - 1) is not None:
-                break
-            if DECL_RE.match(cline):
+            if not prose[line_no] and (
+                    stripped.startswith("text ")
+                    or stripped.startswith("text\\<open>")
+                    or _heading_at(lines, line_no - 1) is not None):
+                if closes is None:
+                    closes = (_proof_close_line(outer, proof_line, thy_end)
+                              if outer else 0)
+                # Before the proof has closed, it is prose in the middle of
+                # the proof, not the end of it.
+                if not closes or line_no > closes:
+                    break
+            if not prose[line_no] and DECL_RE.match(cline):
                 break
         if stripped:
             last = line_no

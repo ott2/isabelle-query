@@ -55,7 +55,6 @@ from isabelle_query.graph import (
     _noise_spans)
 from isabelle_query.model import Entry, TheorySection
 from isabelle_query.parsing import LETTER_SYMS
-from isabelle_query.shape import _inline_proof_col
 
 # An identifier by Isabelle's own lexical rule (`Doc/Isar_Ref`, "letter"): an
 # ASCII letter, a Greek or `\<A>` / `\<AA>` letter symbol, and inside the name
@@ -124,21 +123,21 @@ class _Tok:
 def _body_tokens(sec: TheorySection, entry: Entry) -> list[_Tok]:
     """The proof body of *entry* as one token stream, in source order."""
     outer_src, live_src = sec.outer_source(), sec.live_source()
-    # `thy_end`, not `body_end_line`: the latter stops at the first `text`
-    # block, and one written INSIDE a proof would cut the body in half.  Past
-    # the proof's own `qed` every scope has closed, so nothing up to `thy_end`
-    # can reach a binding; the `text` itself is noise and skipped below.
+    # Read as far as `thy_end`; `_walk` stops at the proof's own close.  The
+    # `text` blocks a proof may contain are noise and skipped below.
     end = min(entry.thy_end or len(outer_src), len(outer_src))
     noise: set[int] = set()
     for lo, hi in _noise_spans(sec):
         noise.update(range(lo, hi + 1))
-    first_col = _inline_proof_col(sec, entry)
+    # The proof line is read whole, even when the statement shares it: the
+    # statement's outer words bind nothing, and cutting at the method (as
+    # `shape._inline_proof_col` does) loses a leading `subgoal`.
     out: list[_Tok] = []
     for ln in range(entry.proof_line, end + 1):
         if ln in noise:
             continue
         outer, live = outer_src[ln - 1], live_src[ln - 1]
-        start = first_col if ln == entry.proof_line else 0
+        start = 0
         toks: list[_Tok] = []
         for m in _TOKEN_RE.finditer(outer, start):
             if not m.group("sym"):
@@ -289,12 +288,12 @@ def proof_end(sec: TheorySection, entry: Entry) -> int:
 def _walk(sec: TheorySection, entry: Entry) -> _Walk:
     """Walk *entry*'s proof from `proof_line` until its own goal is closed.
 
-    The walk reads as far as `thy_end` but STOPS where the proof does, and both
-    halves matter.  `body_end_line` is too short: it ends at the first `text`
-    block, and a `text` written inside a proof would cut it in half.  `thy_end`
-    is too long: a command that proves something without being an entry — an
-    `instance`, a `termination` — sits inside the previous entry's span, and
-    its bindings are not this proof's."""
+    The walk reads as far as `thy_end` but STOPS where the proof does.
+    `thy_end` is too long: a command that proves something without being an
+    entry — an `instance`, a `termination` — sits inside the previous entry's
+    span, and its bindings are not this proof's.  `parsing._proof_close_line`
+    walks the same structure for `body_end_line` [body-end-text]; over the AFP
+    the two agree on all 297,954 proofs, and a test holds them together."""
     toks = _body_tokens(sec, entry)
     w = _Walk(entry.name)
     cmd = ""

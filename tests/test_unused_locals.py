@@ -300,6 +300,14 @@ proof -
   show ?thesis using x by simp
 qed
 
+lemma prose_decl: "True"
+proof -
+  have y: "True" by simp
+  text \<open>As in
+lemma foo, which this mirrors.\<close>
+  show ?thesis using y by simp
+qed
+
 end
 '''
 
@@ -325,6 +333,27 @@ class Extent(_Root):
 
     def test_a_text_block_does_not_end_the_proof(self):
         self.assertEqual(proof_locals.proof_end(*self.entry("remark")), 31)
+        # [body-end-text]: the parser's own extent agrees, where it used to
+        # stop at the `text` on line 29.
+        self.assertEqual(self.entry("remark")[1].body_end_line, 31)
+
+    def test_prose_in_a_text_block_is_not_a_declaration(self):
+        # Line 37 begins with `lemma`, inside the block: English, not the next
+        # entry (`Kyber_gpv_IND_CPA:273` has exactly this).
+        self.assertEqual(self.entry("prose_decl")[1].body_end_line, 39)
+
+    def test_parser_and_walk_agree_on_where_proofs_close(self):
+        # Two walks of one structure: `parsing` (for `body_end_line`) and
+        # `proof_locals` (which also tracks names).  They must not drift.
+        from isabelle_query.parsing import _proof_close_line
+        sec = self.sections[0]
+        outer = sec.outer_source()
+        for e in sec.entries:
+            if e.proof_line:
+                with self.subTest(entry=e.name):
+                    self.assertEqual(
+                        _proof_close_line(outer, e.proof_line, e.thy_end),
+                        proof_locals.proof_end(sec, e))
 
 
 if __name__ == "__main__":

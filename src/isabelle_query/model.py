@@ -87,8 +87,9 @@ class Entry:
                             # body (the closing `qed`, the terminating `by` /
                             # `.`, or for declarations the last header line).
                             # Stops before any trailing inter-lemma `text` /
-                            # `\<comment>` block.  Safe cut boundary for
-                            # `bin/move-block.py`.
+                            # `\<comment>` block — but not at a `text` written
+                            # inside the proof, which does not end it.  Safe
+                            # cut boundary for `bin/move-block.py`.
     # Comment context attached during _parse_one:
     preamble: tuple[int, int] | None = None
         # (start, end) of the `text \<open>...\<close>` block immediately

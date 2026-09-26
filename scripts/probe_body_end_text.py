@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """How often does `Entry.body_end_line` stop INSIDE a proof? [body-end-text]
 
+A regression check now: 302 before the fix, 0 after (AFP, 297,954 proofs).
+
 `body_end_line` is documented to stop before a trailing inter-lemma `text` /
 `\\<comment>` block.  A `text` block is also legal in proof mode, and one written
-mid-proof ends the body there: `Ford_Fulkerson.flow_value` ends at line 36
-while its `qed` is at 89.  Every consumer that walks `proof_line ..
-body_end_line` — the `shape` step scan, `enclosing`'s block drill-down — then
-sees half a proof.  Found while building `unused --locals`, which walks to
-where the proof ends instead.
+mid-proof used to end the body there: `Ford_Fulkerson.flow_value` ended at line
+36 while its `qed` is at 89, and every consumer that walks `proof_line ..
+body_end_line` — the `shape` step scan, `enclosing`'s block drill-down — saw
+half the proof.
 
 Compares `body_end_line` with where the proof actually ends, as
 `proof_locals.proof_end` walks it — the entry's outermost `qed` or the
