@@ -41,6 +41,21 @@ in `CONTRIBUTING.md`.
       proof (they touch `find` / `show` / `callers`, not `shape`);
       `schematic_goal` has one.  Worth splitting if they do not share a change.
 
+- [ ] `[body-end-text]` **`Entry.body_end_line` stops at a `text` block written
+      INSIDE a proof**, so every consumer that walks `proof_line ..
+      body_end_line` sees half the proof: the `shape` step scan and
+      `enclosing`'s block drill-down.  The field is documented to stop before a
+      TRAILING inter-lemma `text`, and cannot tell that from one in proof mode.
+      `Ford_Fulkerson.flow_value` ends at line 36; its `qed` is at 89.
+      Measured by `scripts/probe_body_end_text.py` against where the proof
+      really ends (`proof_locals.proof_end`, the walk `unused --locals` uses):
+      **302 of 297,954 AFP proofs (0.10%), ~60,700 proof lines unseen** —
+      long proofs, which is why a small count hides a large line total.  A fix
+      moves published `shape` numbers, so it wants the census comparison that
+      `[decl-commands]` / `[proof-bearing-commands]` also call for.
+      `proof_end` is the candidate replacement, but it stops at the entry's
+      own goal and would need its own AFP pass before `parsing` trusts it.
+
 - [ ] `[proof-bearing-commands]` **(scope call, not a defect.)**  A command that
       proves something but declares no fact — `instance`, `sublocale`,
       `interpretation`, `subclass`, `termination`, `notepad` — is not an
