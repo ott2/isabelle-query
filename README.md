@@ -4,11 +4,17 @@
 entries (definitions, lemmas, theorems, datatypes), call graph, theory
 dependencies, outstanding `sorry`s, dead code, and the shape of its proofs.
 
-It parses the project's `.thy` sources on every invocation, so results always
-match the current tree: **no Isabelle build, no proof replay**. A large project
-parses in a fraction of a second, and the whole AFP in a couple of minutes. It is
-aimed at projects big enough that grep-and-examine has stopped working — AFP
-entries, the AFP itself, or industrial verification.
+It parses the project's `.thy` sources on every invocation: **no Isabelle
+build, no proof replay, and the project does not have to check.** That is the
+main reason to reach for it. A theory with a failing proof, an unresolved name,
+a type error or a half-written lemma is still read in full, so `query` works on
+work in progress — the state a project is in while you are changing it — where
+a tool built on Isabelle's own processing (PIDE, the Scala API, exported theory
+data) sees only what Isabelle has managed to accept. Results always match the
+current tree. A large project parses in a fraction of a second, and the whole
+AFP in a couple of minutes. It is aimed at projects big enough that
+grep-and-examine has stopped working — AFP entries, the AFP itself, or
+industrial verification.
 
 Pure Python. One runtime dependency,
 [isabelle-layout](https://pypi.org/project/isabelle-layout/) — the ROOT and
@@ -17,7 +23,8 @@ does not require installing a CLI. `pip` fetches it for you.
 
 News 2026-08-29: David Wang has [ported isabelle-query to Scala](https://github.com/david-wang-0/isabelle-query)
 which of course unlocks a bunch of new features since that improves integration
-with Isabelle.
+with Isabelle. This Python version remains the one to use on a tree Isabelle
+cannot (yet) check.
 
 ## Commands
 
