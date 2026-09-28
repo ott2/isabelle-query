@@ -193,18 +193,6 @@ in `CONTRIBUTING.md`.
       for `callers mono -c`.  Worth knowing before any measurement is quoted
       across machines.
 
-- [ ] `[axiom-for]` An `axiomatization`'s `for` clause is indexed as constants.
-
-          axiomatization where ... and id_preregister: ...
-          for F :: \<open>...\<close> and G :: \<open>...\<close>   -- AFP Registers/Axioms:22
-
-      yields AXIOM entries `F` and `G`; they are variables fixed for the
-      axioms, not constants, so `find F` / `show F` answer with a name that
-      is not in the theory's namespace.  Same `_AXIOM_NAME_RE` colon match as
-      `[axiom-untyped]` below, from the other side: `F :` out of `F ::`.
-      Found by `scripts/probe_cut_span.py` (the two share line 22, so both get
-      `shares_line`).  Not yet measured corpus-wide.
-
 - [ ] `[axiom-untyped]` An `axiomatization` constant with NO type ascription is
       not indexed.
 

@@ -199,6 +199,64 @@ lemma foo: "True" by simp
         self.assertEqual(sorted(got), ["ax1"])
 
 
+class ForAndIfDeclareNoNames(unittest.TestCase):
+    r"""Nothing after `for` or `if` is a constant or an axiom [axiom-for].
+
+    Isabelle's grammar (Pure.thy, `val axiomatization`):
+
+        axiomatization vars? (where (thm_name: prop) and ... if_assumes? for_fixes?)?
+
+    `for_fixes` is last, so a `for` runs to the end of the command and every
+    name in it is a variable fixed for the axioms; `if_assumes` holds only
+    propositions.  Both words were stripped as continuation keywords, and
+    `F :` out of `F :: T` read as a label.
+    """
+
+    def test_a_for_clause_on_its_own_line(self):
+        # Registers/Axioms.thy:18-22: `F` and `G` were AXIOM entries.
+        got = _axioms(r'''
+axiomatization
+  preregister :: \<open>('a update \<Rightarrow> 'b update) \<Rightarrow> bool\<close>
+where
+  comp_preregister: "preregister F \<Longrightarrow> preregister (G \<circ> F)" and
+  id_preregister: \<open>preregister id\<close>
+for F :: \<open>'a update \<Rightarrow> 'b update\<close> and G :: \<open>'b update \<Rightarrow> 'c update\<close>
+''')
+        self.assertEqual(sorted(got), ["comp_preregister", "id_preregister",
+                                       "preregister"])
+
+    def test_a_for_clause_sharing_the_axiom_line(self):
+        # `and y` after `for` is a second fixed variable, not a second axiom.
+        got = _axioms(r'''
+axiomatization where ax: "P x y" for x :: "nat" and y :: "nat"
+''')
+        self.assertEqual(sorted(got), ["ax"])
+
+    def test_a_for_clause_split_over_lines(self):
+        got = _axioms(r'''
+axiomatization where ax: "P x y"
+  for x :: "nat"
+  and y :: "nat"
+''')
+        self.assertEqual(sorted(got), ["ax"])
+
+    def test_an_if_clause_names_nothing(self):
+        got = _axioms(r'''
+axiomatization where ax: "Q x"
+  if "P x" and "R x"
+  for x :: "nat"
+''')
+        self.assertEqual(sorted(got), ["ax"])
+
+    def test_the_next_command_is_still_found(self):
+        got = _axioms(r'''
+axiomatization where ax: "P x" for x :: "nat"
+
+axiomatization where bx: "P x" for x :: "nat"
+''')
+        self.assertEqual(sorted(got), ["ax", "bx"])
+
+
 class TheUmbrellaIsAnonymousAndStays(unittest.TestCase):
     r"""`axiomatization` gets an anchor entry with no name [axiom-names].
 

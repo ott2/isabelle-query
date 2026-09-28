@@ -478,16 +478,26 @@ def _entries_by_line(
     return pairs, [line for line, _ in pairs]
 
 
-# `and` at outer-syntax position, separating two items of one `axiomatization`.
-# Only ever applied to the OUTER view, so the `and` inside a proposition — or
-# the `\<and>` connective, whose letters this would otherwise match — is already
+# What follows an item of one `axiomatization` at outer-syntax position: `and`
+# before the next item, or the `if` / `for` tail that ends the names.  Only
+# ever applied to the OUTER view, so the `and` inside a proposition — or the
+# `\<and>` connective, whose letters this would otherwise match — is already
 # blanked.
-_AXIOM_AND_RE = re.compile(r"(?<![\w'])and(?![\w'])")
+_AXIOM_SEP_RE = re.compile(r"(?<![\w'])(and|for|if)(?![\w'])")
+# Where an axiomatization stops declaring names [axiom-for].  Isabelle's
+# grammar is `vars? (where (thm_name: prop) and ... if_assumes? for_fixes?)?`
+# (Pure.thy, `val axiomatization`): `if` introduces premises and `for` the
+# variables fixed for the axioms, and nothing after either is a constant or a
+# label — `for F :: T` read as a label `F`.
+_AXIOM_CLOSERS = frozenset({"for", "if"})
 
 
-def _axiom_line(text: str) -> tuple[list[str], bool]:
-    """Read one `axiomatization` line: the names it declares, and whether it
-    opened with a continuation keyword.
+def _axiom_line(text: str, closed: bool = False
+                ) -> tuple[list[str], bool, bool]:
+    """Read one `axiomatization` line: the names it declares, whether it
+    opened with a continuation keyword, and whether the command has reached
+    its `if` / `for` tail, after which it declares nothing (``closed``, passed
+    in for the lines that follow).
 
     *Names*, plural, because `and` separates items **within** a line as
     readily as it ends one:
@@ -515,20 +525,26 @@ def _axiom_line(text: str) -> tuple[list[str], bool]:
     stripped = text.strip()
     cont = bool(_STATEMENT_CONT_RE.match(stripped))
     names: list[str] = []
-    while stripped:
+    while stripped and not closed:
         kw = _STATEMENT_CONT_RE.match(stripped)
         if kw:                       # `where` / `and` / ... introducing an item
+            if kw.group(0).strip() in _AXIOM_CLOSERS:
+                closed = True
+                break
             stripped = stripped[kw.end():].lstrip()
             continue
         m = _AXIOM_NAME_RE.match(stripped)
         if not m:
             break
         names.append(m.group(1))
-        nxt = _AXIOM_AND_RE.search(stripped, m.end())
+        nxt = _AXIOM_SEP_RE.search(stripped, m.end())
         if not nxt:                  # nothing further on this line
             break
+        if nxt.group(1) in _AXIOM_CLOSERS:
+            closed = True
+            break
         stripped = stripped[nxt.end():].lstrip()
-    return names, cont
+    return names, cont, closed
 
 
 def _constructors(outer: list[str], start: int, end: int,
@@ -2115,7 +2131,8 @@ def extract_entries(lines: list[str],
             # The command line itself may already carry the first name —
             # `axiomatization where process_finite:` or `axiomatization
             # f :: "nat"` — so read its remainder before stepping below it.
-            head_names, _ = _axiom_line(outer[i][indent + len(keyword):])
+            head_names, _, closed = _axiom_line(
+                outer[i][indent + len(keyword):])
             for head_name in head_names:
                 entries.append(
                     Entry("AXIOM", head_name,
@@ -2123,7 +2140,7 @@ def extract_entries(lines: list[str],
                           thy_line=decl_line, decl_end_line=decl_line))
             i += 1
             while i < len(lines):
-                found, cont = _axiom_line(outer[i])
+                found, cont, closed = _axiom_line(outer[i], closed)
                 if found:
                     for name in found:
                         entries.append(
