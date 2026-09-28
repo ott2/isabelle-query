@@ -49,6 +49,8 @@ from isabelle_query.model import Entry, TheorySection
 from isabelle_query.parsing import (
     _CUSTOM_COMMANDS,
     _parse_one,
+    _populate_custom_commands,
+    _root_theories,
     _sections_from_dir,
 )
 
@@ -56,7 +58,8 @@ __all__ = ["Entry", "TheorySection", "parse_root", "parse_theory"]
 
 
 def parse_theory(theory: str, path: Path,
-                 lines: list[str] | None = None) -> TheorySection:
+                 lines: list[str] | None = None, *,
+                 root: Path | None = None) -> TheorySection:
     """Parse ONE theory's source into a fully-populated :class:`TheorySection`.
 
     ``lines``, when given, is parsed in place of reading ``path``, which may
@@ -64,12 +67,21 @@ def parse_theory(theory: str, path: Path,
     section caches them, so a later ``source()`` never falls back to a path
     that does not exist.
 
-    **Scope caveat, and it is the one that bites.**  Isabelle's keyword table
-    is session-wide (`Keywords.++`), so a theory that uses a custom command
-    another theory in its session declares is parsed correctly by `query` and
-    NOT by this function, which sees only ``path``'s own header.  Nothing warns
-    you: the command is simply not recognised and its declarations are absent.
-    Use :func:`parse_root` for anything that has to agree with the CLI.
+    **Scope, and it is the one that bites.**  Isabelle's keyword table is
+    session-wide (`Keywords.++`), so a theory that uses a custom command
+    another theory in its session declares is parsed correctly by `query` and,
+    without ``root``, NOT by this function, which then sees only ``path``'s own
+    header.  Nothing warns you: the command is simply not recognised and its
+    declarations are absent.
+
+    Pass ``root`` — the directory you would give ``query -R`` — and the keyword
+    table is built exactly as the CLI builds it, from every theory header under
+    that root, before this one theory is parsed.  Only headers are read, so
+    this costs a walk of the ROOT files rather than a parse of the project: the
+    entries then agree with :func:`parse_root`'s for the same theory, at a
+    fraction of the cost.  ``session`` is filled in when ``path`` is one of the
+    root's theories.  A ``root`` that is not a directory, or that yields no
+    theories, raises ``ValueError`` as :func:`parse_root` does.
 
     That table is a module global, so this saves and restores it rather than
     reading whatever the last call left behind.  Without that, the answer here
@@ -78,10 +90,24 @@ def parse_theory(theory: str, path: Path,
     which is the worst kind of wrong because it is reproducible per-run and not
     across runs.
     """
+    session = None
+    pairs: list[tuple[str, Path]] = []
+    if root is not None:
+        root = Path(root)
+        if not root.is_dir():
+            raise ValueError(f"{root}: no such directory")
+        pairs, session_of = _root_theories(root)
+        if not pairs:
+            raise ValueError(f"{root}: no theories found — not an Isabelle "
+                             f"session root, or unreadable")
+        session = session_of.get(Path(path).resolve())
     saved = dict(_CUSTOM_COMMANDS)
     _CUSTOM_COMMANDS.clear()
     try:
-        return _parse_one(theory, path, lines)
+        _populate_custom_commands(pairs)
+        sec = _parse_one(theory, path, lines)
+        sec.session = session
+        return sec
     finally:
         _CUSTOM_COMMANDS.clear()
         _CUSTOM_COMMANDS.update(saved)

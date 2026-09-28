@@ -2856,6 +2856,20 @@ def _sections_from_dir(root_dir: Path,
     build the custom-command union (so a use can precede its declaration in
     parse order), then parse each theory's entries.
     """
+    pairs, session_of = _root_theories(root_dir)
+    _populate_custom_commands(pairs)
+    for name, thy_path in pairs:
+        _add_one_section(name, thy_path, seen_paths, sections,
+                         session=session_of.get(thy_path.resolve()))
+
+
+def _root_theories(root_dir: Path
+                   ) -> tuple[list[tuple[str, Path]], dict[Path, str]]:
+    """The theories `query -R root_dir` loads, as ``(name, path)`` pairs, and
+    the owning session of each by resolved path.  Reads ROOT files and theory
+    headers only — the first phase of :func:`_sections_from_dir`, split out so
+    a single-theory parse can build the same keyword table without parsing
+    every body."""
     roots = discover_roots(root_dir)
     pairs: list[tuple[str, Path]] = []
     session_of: dict[Path, str] = {}  # resolved path -> owning session name
@@ -2873,11 +2887,7 @@ def _sections_from_dir(root_dir: Path,
     else:
         for thy_path in sorted(root_dir.rglob("*.thy")):
             pairs.append((thy_path.stem, thy_path))
-
-    _populate_custom_commands(pairs)
-    for name, thy_path in pairs:
-        _add_one_section(name, thy_path, seen_paths, sections,
-                         session=session_of.get(thy_path.resolve()))
+    return pairs, session_of
 
 
 def sections_for_session(session: SessionInfo,

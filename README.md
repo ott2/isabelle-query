@@ -214,10 +214,11 @@ patch release may move it.
 
 Four rather than the dozen functions that look public, because their results
 are already fields on the two objects, and the hard part is the order the
-scanners run in — that composition is what `parse_theory` is. Use `parse_root`
-whenever the answer must match `query -R`: Isabelle's keyword table is
-session-wide, so a single theory parsed alone cannot see a custom command a
-sibling declares.
+scanners run in — that composition is what `parse_theory` is. Isabelle's
+keyword table is session-wide, so a single theory parsed alone cannot see a
+custom command a sibling declares: whenever the answer must match `query -R`,
+use `parse_root`, or `parse_theory(..., root=DIR)`, which reads every header
+under `DIR` but parses only the one theory.
 
 A tool that **edits** by entry should cut `e.cut_span`: the preamble through
 the end of the proof, never reaching the next entry. It is `None` when no line

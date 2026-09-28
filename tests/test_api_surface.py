@@ -276,6 +276,31 @@ class ParseRootAgreesWithTheCli(unittest.TestCase):
         sec = api.parse_theory("B", self.dir / "B.thy")
         self.assertNotIn("gadget", [e.name for e in sec.entries])
 
+    def test_parse_theory_with_root_sees_the_sibling_declaration(self):
+        # The cheap route to the same answer [cut-span]: headers under the
+        # root build the keyword table, and only B's body is parsed.  Run
+        # after a table-clearing call, so a leftover `mydef` cannot be why.
+        api.parse_theory("B", self.dir / "B.thy")
+        sec = api.parse_theory("B", self.dir / "B.thy", root=self.dir)
+        self.assertIn("gadget", [e.name for e in sec.entries])
+        self.assertEqual(sec.session, "Demo")
+        full = {s.theory: s for s in api.parse_root(self.dir)}["B"]
+        self.assertEqual([(e.name, e.thy_line, e.cut_span) for e in sec.entries],
+                         [(e.name, e.thy_line, e.cut_span) for e in full.entries])
+
+    def test_parse_theory_with_root_leaves_the_table_as_it_found_it(self):
+        api.parse_theory("B", self.dir / "B.thy", root=self.dir)
+        sec = api.parse_theory("B", self.dir / "B.thy")
+        self.assertNotIn("gadget", [e.name for e in sec.entries])
+
+    def test_parse_theory_with_a_bad_root_raises(self):
+        with self.assertRaises(ValueError):
+            api.parse_theory("B", self.dir / "B.thy", root=self.dir / "nope")
+        empty = self.dir / "empty"
+        empty.mkdir()
+        with self.assertRaises(ValueError):
+            api.parse_theory("B", self.dir / "B.thy", root=empty)
+
     def test_parse_theory_leaves_the_table_as_it_found_it(self):
         # The other half: a `parse_theory` in the middle of a session-scoped
         # workflow must not silently narrow the next `parse_root` result.
