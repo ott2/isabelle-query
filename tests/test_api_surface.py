@@ -47,12 +47,15 @@ ENTRY_SPAN_FIELDS = [
     "body_end_line",   # last line of the proof body
     "thy_end",         # last line of the entry's span
     "preamble",        # (start, end) of the leading `text` block, or None
+    "shares_line",     # another entry's lines meet this one's: no cut_span
 ]
 # Derived, not stored — `src_start` is the preamble start when there is one and
 # `thy_line` otherwise, which is the number `delete-lemmas.py` needs and the
 # one a consumer would otherwise recompute.  Pinned separately because
 # `dataclasses.fields` does not see a property.
-ENTRY_SPAN_PROPERTIES = ["src_start", "line_count"]
+# `cut_span` is the span a tool writes through — what `block.py` in NDTHT
+# used to clip for itself [cut-span].
+ENTRY_SPAN_PROPERTIES = ["src_start", "line_count", "cut_span"]
 SECTION_SPAN_FIELDS = [
     "theory", "path", "entries", "thy_lines",
     "outline",          # [(level, title, line)]
@@ -162,6 +165,67 @@ class TheSpansAreRight(unittest.TestCase):
 
     def test_slice_round_trips_the_lines(self):
         self.assertEqual(self.sec.slice(7, 7), ["lemma documented:"])
+
+    def test_the_cut_span_is_preamble_through_qed(self):
+        self.assertEqual(self.entry.cut_span, (5, 12))
+
+
+class TheCutSpanHoldsOneEntry(unittest.TestCase):
+    r"""`cut_span` is written through, so it must hold its entry and no part
+    of another [cut-span].  Hand-computed on the fixture below:
+
+      * `first` is 4..5 — not 4..7: the blank on 6 and the inter-lemma
+        `text` on 7 are not its body, and 8 is `second`'s preamble;
+      * `second` is 8..12, its preamble through `qed`;
+      * the one-line `axiomatization` on 14 is two entries — the command and
+        its axiom `F1` — which lines cannot split, so both are None rather
+        than a span that takes the other along (the shape of AFP
+        `SimplifiedOntologicalArgument/SimpleVariantHF.thy:12`).
+    """
+
+    SRC = ("theory Cut\nimports Main\nbegin\n"          # 1-3
+           'lemma first: "True"\n'                        # 4
+           "  by simp\n"                                  # 5
+           "\n"                                           # 6
+           "text \\<open>Doc for second.\\<close>\n"      # 7
+           "text \\<open>Its own preamble.\\<close>\n"    # 8
+           'lemma second: "True"\n'                       # 9
+           "proof -\n  show ?thesis by simp\n"            # 10-11
+           "qed\n"                                        # 12
+           "\n"                                           # 13
+           'axiomatization where F1: "True"\n'            # 14
+           "end\n")
+
+    def setUp(self):
+        sec = api.parse_theory("Cut", Path("<test>"), self.SRC.splitlines())
+        self.entries = sec.entries
+        self.by_name = {e.name: e for e in sec.entries}
+
+    def test_a_trailing_text_block_is_left_behind(self):
+        first = self.by_name["first"]
+        self.assertEqual(first.cut_span[1], 5)
+        self.assertLess(first.cut_span[1], self.by_name["second"].src_start)
+
+    def test_the_next_entry_takes_its_own_preamble(self):
+        second = self.by_name["second"]
+        self.assertEqual(second.cut_span, (8, 12))
+
+    def test_one_line_declarations_have_no_cut_span(self):
+        on_14 = [e for e in self.entries if e.thy_line == 14]
+        self.assertEqual(len(on_14), 2, "fixture no longer yields both entries")
+        self.assertIn("F1", [e.name for e in on_14])
+        for e in on_14:
+            with self.subTest(name=e.name):
+                self.assertTrue(e.shares_line)
+                self.assertIsNone(e.cut_span)
+
+    def test_entries_on_their_own_lines_are_not_flagged(self):
+        for n in ("first", "second"):
+            with self.subTest(name=n):
+                self.assertFalse(self.by_name[n].shares_line)
+
+    def test_an_unplaced_entry_has_no_cut_span(self):
+        self.assertIsNone(api.Entry("LEMMA", "x", "").cut_span)
 
 
 class ParseRootAgreesWithTheCli(unittest.TestCase):

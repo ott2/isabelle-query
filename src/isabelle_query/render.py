@@ -166,7 +166,7 @@ def _format_extent(entry: Entry) -> str:
     span ``thy_line..body_end_line`` is surfaced separately whenever it is
     narrower at either end: a leading doc block (``src_start < thy_line``) or
     a trailing inter-lemma block (``body_end < thy_end``).  The body end is
-    the safe cut boundary for `bin/move-block.py`; `src` is the
+    the end of `Entry.cut_span`, the safe cut boundary; `src` is the
     end-of-region the next entry-or-section starts after.
     """
     if not entry.thy_line:

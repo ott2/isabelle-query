@@ -215,6 +215,14 @@ module in the package while promising nothing extra.
 nothing — `import isabelle_query` must stay free of the parser, which `_prog`
 and the version lookup do not want. Both are enforced by that test file.
 
+A span a consumer **writes through** is a guarantee this package owns, not one
+each consumer re-derives. `Entry.cut_span` promises a span holding its entry
+and nothing of another, and is `None` where no line span can (two declarations
+on one line) — a consumer that clipped for itself was re-checking query's
+extents after every upgrade, and still let the one-line case through. Re-run
+`scripts/probe_cut_span.py ~/repos/afp/thys` after any change to entry
+extents; its last line must read 0 [cut-span].
+
 A library entry point that reads a module global gets it **saved and restored**,
 or the answer depends on call order — `parse_theory` after a `parse_root` was
 returning the previous root's custom commands. Same family as the namespace

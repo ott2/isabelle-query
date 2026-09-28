@@ -88,8 +88,8 @@ class Entry:
                             # `.`, or for declarations the last header line).
                             # Stops before any trailing inter-lemma `text` /
                             # `\<comment>` block — but not at a `text` written
-                            # inside the proof, which does not end it.  Safe
-                            # cut boundary for `bin/move-block.py`.
+                            # inside the proof, which does not end it.  Never
+                            # past thy_end; see `cut_span` for the write span.
     # Comment context attached during _parse_one:
     preamble: tuple[int, int] | None = None
         # (start, end) of the `text \<open>...\<close>` block immediately
@@ -186,6 +186,40 @@ class Entry:
         documents THIS entry, so it counts as part of this entry's extent
         (and is excluded from the preceding entry's `thy_end`)."""
         return self.preamble[0] if self.preamble else self.thy_line
+
+    shares_line: bool = False
+        # Another entry's line span meets this one's: two declarations written
+        # on one line (`consts F G`, a one-line `axiomatization`), or a body
+        # ending on the line the next declaration starts.  Lines cannot
+        # separate them, so `cut_span` is None.  Set by `_mark_shared_lines`.
+
+    def _line_cut(self) -> tuple[int, int]:
+        """`cut_span` before the shared-line check: the extent alone."""
+        if not self.thy_line:
+            return (0, 0)
+        end = min(self.body_end_line or self.thy_end, self.thy_end)
+        return (self.src_start, max(end, self.thy_line))
+
+    @property
+    def cut_span(self) -> tuple[int, int] | None:
+        """The lines to cut to remove or relocate this entry: ``src_start``
+        (its doc preamble, if any) through ``body_end_line`` (the `qed` / `by`
+        / `.` that closes its proof), inclusive.
+
+        This is the span a tool *writes through*, and the one guarantee that
+        makes that safe is that it holds this entry and no part of another:
+        the upper end is capped at ``thy_end``, which stops before the next
+        entry's ``src_start``, so a delete cannot take the following lemma's
+        documentation with it.  Unlike ``src_start..thy_end`` it leaves the
+        trailing blank lines and any inter-lemma `text` after the proof in
+        place, since those are not part of the entry's body.
+
+        ``None`` when no line span has that property — the entry shares a line
+        with another (:attr:`shares_line`) — and for an unplaced entry.  A
+        caller that writes must handle it, not fall back to a wider span."""
+        if not self.thy_line or self.shares_line:
+            return None
+        return self._line_cut()
 
     @property
     def line_count(self) -> int:

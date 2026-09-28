@@ -2727,6 +2727,7 @@ def _parse_one(thy: str, thy_path: Path,
                                             e.thy_end, outer_live, prose_body)
         else:
             e.body_end_line = e.decl_end_line or e.thy_line
+    _mark_shared_lines(entries)
     sec = TheorySection(thy, thy_path, entries, thy_lines=len(lines),
                         outline=outline, text_blocks=text_blocks,
                         heading_spans=heading_spans,
@@ -2738,6 +2739,21 @@ def _parse_one(thy: str, thy_path: Path,
         # No disk path to lazily re-read (stdin); pin the source we already have.
         sec._source_cache = lines
     return sec
+
+
+def _mark_shared_lines(entries: list[Entry]) -> None:
+    """Flag each entry whose cut span meets a neighbour's [cut-span].
+
+    `Entry.cut_span` promises a span holding one entry and nothing of another.
+    `thy_end` caps it below the next entry's start, which is enough unless the
+    next entry starts on this one's last line — two declarations on one line
+    (226 AFP entries, e.g. `consts F G`).  Then no line span separates them, and
+    BOTH are flagged: cutting either line takes the other with it."""
+    placed = sorted((e for e in entries if e.thy_line),
+                    key=lambda e: e.thy_line)
+    for a, b in zip(placed, placed[1:]):
+        if a._line_cut()[1] >= b.src_start:
+            a.shares_line = b.shares_line = True
 
 
 def _parse_plain(thy: str, path: Path,

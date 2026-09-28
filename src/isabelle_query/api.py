@@ -36,7 +36,9 @@ and the character-level `nonisar_spans` / `inner_spans` — plus `source()`,
 too — Isar command position).  All of them are 1-indexed by line and
 length-preserving by column, so a line number means the same thing in every
 view.  `Entry` carries `thy_line`, `decl_end_line`, `proof_line`,
-`body_end_line`, `src_start`, `thy_end` and `preamble`.
+`body_end_line`, `src_start`, `thy_end` and `preamble`, and `cut_span` — the
+preamble-through-proof span a tool that deletes or moves an entry writes
+through, guaranteed to stop before the next entry.
 """
 
 from __future__ import annotations

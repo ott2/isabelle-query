@@ -219,6 +219,11 @@ whenever the answer must match `query -R`: Isabelle's keyword table is
 session-wide, so a single theory parsed alone cannot see a custom command a
 sibling declares.
 
+A tool that **edits** by entry should cut `e.cut_span`: the preamble through
+the end of the proof, never reaching the next entry. It is `None` when no line
+span can promise that — two declarations sharing a line — and a caller should
+refuse there rather than widen it.
+
 ## Installation
 
 Requires Python 3.9 or greater. Installs the command on your `PATH` under two
