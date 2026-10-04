@@ -170,6 +170,10 @@ $ echo $?
 1
 ```
 
+Given several subjects, one that does not exist fails the whole run the same
+way: each unknown name is reported, stdout stays empty, and the status is `1`
+— so an answer never lands in the slot of the name before it.
+
 `instances` and `codeqs` exit `1` for a subject that is not a declared locale
 or class, respectively constant — a typo and a locale from an imported session
 would otherwise look exactly like one nobody instantiates — and `0` for a

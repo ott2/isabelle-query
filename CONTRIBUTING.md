@@ -74,6 +74,13 @@ while `callees` needs the entry to exist before it can have callees. Different
 questions, different empties. `scripts/probe_count_modes.py` checks the whole
 family at once — add a verb there when you add one here.
 
+**A batch is all or nothing.** With several subjects (`callers -r -c A bogus
+C`), one unresolvable subject fails the run: every unknown one is reported on
+stderr, stdout stays empty, exit `1`. Answering the rest would leave a gap a
+positional reader cannot see — two counts for three names, the second of them
+C's. Partial answers are safe only in a format whose every row names its
+subject [subject-batch].
+
 **The two site verbs sit in the lookup family, and their exit contract is the
 reason they were allowed to exist.** `instances` and `codeqs` take a subject
 list and no PATH positionals. Neither has a prover-side oracle to compare

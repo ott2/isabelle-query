@@ -84,5 +84,44 @@ class TheGraphIsBuiltOnce(SubjectLoop):
         self.assertEqual(built.call_count, 1)
 
 
+class AnUnknownSubjectFailsTheBatch(SubjectLoop):
+    """All or nothing [subject-batch].
+
+    `[unresolved-subject]` made an unknown subject exit 1 with stdout
+    untouched, so `$(query callees X -c)` never captures a non-answer.  The
+    batch keeps that: answering the rest would leave a gap a positional reader
+    cannot see -- two counts for `A bogus C`, the second of them C's.  What the
+    batch gains is that EVERY unknown name is reported, not only the first.
+    """
+
+    def test_stdout_is_untouched_and_the_status_is_1(self):
+        code, out, err = self.run_cli("callers", "-r", "-c",
+                                      "base", "bogus", "top")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("'bogus'", err)
+
+    def test_every_unknown_subject_is_reported(self):
+        code, out, err = self.run_cli("callees", "-c",
+                                      "nope1", "base", "nope2")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("'nope1'", err)
+        self.assertIn("'nope2'", err)
+
+    def test_a_clean_batch_matches_the_single_calls(self):
+        # The blank-line layout a positional reader splits on is unchanged.
+        singles = [self.run_cli("callers", "-r", n)[1]
+                   for n in ("base", "mid", "top")]
+        code, out, _ = self.run_cli("callers", "-r", "base", "mid", "top")
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "\n".join(singles))
+
+    def test_a_scan_with_no_hits_is_not_unknown(self):
+        # Plain `callers` scans text: zero mentions of an undeclared name is
+        # an honest 0, not a failure (CONTRIBUTING's two empties).
+        code, out, _ = self.run_cli("callers", "-c", "base", "bogus")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.split(), ["2", "0"])
+
+
 if __name__ == "__main__":
     unittest.main()

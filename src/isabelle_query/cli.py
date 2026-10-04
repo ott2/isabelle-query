@@ -37,6 +37,8 @@ per-subparser declarations stay short and uniform.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import re
 import sys
@@ -137,6 +139,7 @@ from isabelle_query.render import (  # noqa: F401  (re-exported for the facade)
 # / `_parse_locus` / the stdin sentinels, and the test suite's `cli.cmd_*` /
 # `cli._proof_blocks` / `cli._owner_field` references keep resolving.
 from isabelle_query.commands import (  # noqa: F401  (re-exported for the facade)
+    EXIT_UNRESOLVED,
     _STDIN_NAME,
     _STDIN_PATH,
     _STDIN_SENTINEL,
@@ -808,10 +811,34 @@ def _run_each(ns: argparse.Namespace, attr: str, fn) -> None:
     ``for`` loop does in N.
     """
     sections = _scope_to_theories(ns, _load_sections(ns))
-    for i, subject in enumerate(getattr(ns, attr)):
-        if i > 0:
-            print()
-        fn(sections, subject)
+    subjects = getattr(ns, attr)
+    if len(subjects) == 1:
+        fn(sections, subjects[0])      # nothing to align: stream as before
+        return
+    # All or nothing [subject-batch].  An unresolvable subject exits 1 with
+    # stdout untouched ([unresolved-subject]), and that has to hold for the
+    # batch too: answering the others and leaving a gap would misalign every
+    # answer after it for a reader attributing by position -- `callers -r -c A
+    # bogus C` printing two counts for three names.  So every subject is run
+    # into a buffer, every unknown one is reported (not just the first, which
+    # was all a batch used to say before stopping), and stdout gets everything
+    # or nothing.
+    blocks: list[str] = []
+    failed = 0
+    for subject in subjects:
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                fn(sections, subject)
+        except SystemExit as e:
+            if e.code != EXIT_UNRESOLVED:
+                raise
+            failed += 1
+            continue
+        blocks.append(buf.getvalue())
+    if failed:
+        sys.exit(EXIT_UNRESOLVED)
+    sys.stdout.write("\n".join(blocks))
 
 
 def _run_summary(ns: argparse.Namespace) -> None:
