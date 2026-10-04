@@ -76,6 +76,30 @@ from isabelle_query.render import (
 EXIT_UNRESOLVED = 1
 
 
+# The last call graph built, for the subject loop [graph-once].  `callers -r A
+# B C`, `callees A B C` and `refs A B C` each built the whole graph once per
+# SUBJECT -- 1.18 s each on a 10-session development, against milliseconds
+# for the walk over it.  One slot is enough: a run loads one section list.
+# The list itself is held, not its id(), so a freed list's id cannot be
+# reused by another and hit.
+_GRAPH_MEMO: list = []
+
+
+def _call_graph(sections: list[TheorySection], flags: 'CmdFlags',
+                derived: bool = False) -> CallGraph:
+    """`_build_call_graph` for this run's sections and flags, built once.
+
+    Safe to share because no command mutates a graph; every consumer reads
+    `callers` / `callees` / `all_names` and walks into a fresh dict."""
+    key = (flags.drop_names_upto, derived, flags.reach)
+    if _GRAPH_MEMO and _GRAPH_MEMO[0] is sections and _GRAPH_MEMO[1] == key:
+        return _GRAPH_MEMO[2]
+    g = _build_call_graph(sections, flags.drop_names_upto, derived=derived,
+                          reach=flags.reach)
+    _GRAPH_MEMO[:] = [sections, key, g]
+    return g
+
+
 def _fail_subject(what: str) -> None:
     """Report an unresolvable SUBJECT on stderr and exit non-zero.
 
@@ -731,8 +755,7 @@ def cmd_refs(sections: list[TheorySection], theory: str,
         _fail_subject(f"no theory '{theory}'")
         return
 
-    graph_ = _build_call_graph(sections, flags.drop_names_upto,
-                               reach=flags.reach)
+    graph_ = _call_graph(sections, flags)
     by_theory = _sections_by_theory(sections)
     own = target.theory
     closure = _import_depths(own, by_theory)
@@ -1451,8 +1474,7 @@ def cmd_callers(sections: list[TheorySection], name: str,
                 flags: 'CmdFlags') -> None:
     """Print proof-body usages of a lemma/definition."""
     if flags.recursive:
-        graph = _build_call_graph(sections, flags.drop_names_upto,
-                                  reach=flags.reach)
+        graph = _call_graph(sections, flags)
         if name not in graph.all_names:
             bound = _resolve_binding(sections, name)
             if bound is not None:
@@ -1506,8 +1528,7 @@ def cmd_callees(sections: list[TheorySection], name: str,
     """Entry-level forward edge: the entries this entry references in
     its proof body (its callees).  Pairs with `cmd_callers` (reverse).
     Not to be confused with the theory-level `deps` / `uses` pair."""
-    graph = _build_call_graph(sections, flags.drop_names_upto,
-                              reach=flags.reach)
+    graph = _call_graph(sections, flags)
     if name not in graph.all_names:
         bound = _resolve_binding(sections, name)
         if bound is not None:
@@ -1846,8 +1867,7 @@ def cmd_unused(sections: list[TheorySection], flags: 'CmdFlags') -> None:
     # is a question about the DECLARATION: deleting `definition foo` breaks every
     # proof citing `foo_def`, so such a proof keeps `foo` alive.  Asking the
     # fact-level question here would report live definitions as dead.
-    graph = _build_call_graph(sections, flags.drop_names_upto, derived=True,
-                              reach=flags.reach)
+    graph = _call_graph(sections, flags, derived=True)
 
     keep = set(flags.keep)
     if keep:
@@ -2211,7 +2231,7 @@ def _dot_quote(s: str) -> str:
 def _citation_graph_data(sections: list[TheorySection],
                          flags: "CmdFlags") -> dict:
     """Nodes = indexed entries; edges = caller -> callee."""
-    g = _build_call_graph(sections, flags.drop_names_upto, reach=flags.reach)
+    g = _call_graph(sections, flags)
     by_name = _entry_by_name(sections)
     nodes = [{"name": n, "theory": by_name[n][0], "tag": by_name[n][1].tag,
               "line": by_name[n][1].thy_line}
