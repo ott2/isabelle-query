@@ -390,6 +390,11 @@ class CallGraph:
     callers: dict[str, set[str]]   # callee_name → {caller entry names}
     callees: dict[str, set[str]]   # caller_name → {callee names referenced}
     all_names: set[str]            # universe of indexed entry names
+    # `THEORY:<toplevel>` node -> (its section, {cited name: first line}).  A
+    # synthetic caller has no Entry to locate it, so the graph keeps the place
+    # of each of its citations [toplevel-label].
+    toplevel: dict[str, tuple["TheorySection", dict[str, int]]] = field(
+        default_factory=dict)
 
 
 # Tag families shared across commands.  Named so the membership lists can't

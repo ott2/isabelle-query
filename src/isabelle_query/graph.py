@@ -793,6 +793,7 @@ def _build_call_graph(sections: list[TheorySection],
     #    than testing every one of ~10^5 names against the line.
     callers: dict[str, set[str]] = {n: set() for n in name_set}
     callees: dict[str, set[str]] = {}
+    toplevel: dict[str, tuple[TheorySection, dict[str, int]]] = {}
 
     # Bind the per-line hot callables to locals: this loop runs once per source
     # line (millions of times), and a local is a fast LOAD_FAST vs an attribute
@@ -893,8 +894,12 @@ def _build_call_graph(sections: list[TheorySection],
                     continue
                 callers[name].add(caller_name)
                 callees.setdefault(caller_name, set()).add(name)
+                if caller_entry is None:   # lines run in order: first wins
+                    toplevel.setdefault(caller_name, (sec, {}))[1].setdefault(
+                        name, line_no)
 
-    return CallGraph(callers=callers, callees=callees, all_names=name_set)
+    return CallGraph(callers=callers, callees=callees, all_names=name_set,
+                     toplevel=toplevel)
 
 
 # A proof method is introduced by one of the three pure proof keywords

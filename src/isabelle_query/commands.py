@@ -1485,7 +1485,12 @@ def _callers_tsv(sections: list[TheorySection], subject: str,
     for a closure member
     (`-r`), which is located at its declaration.  The theory is the locus
     label, qualified only as far as it must be, so the locus pastes back into
-    `enclosing` like every other locus query prints."""
+    `enclosing` like every other locus query prints.
+
+    A citation no entry owns is tagged TOPLEVEL and named `THEORY:<toplevel>`
+    in both modes, with its theory and session filled (issue #15).  Plain mode
+    passes its caller as None and the name is minted here; `-r` passes the
+    graph's node, located by :func:`_toplevel_site`."""
     if flags.mode == "count":
         print(f"{subject}\t{len(rows)}")
         return
@@ -1498,7 +1503,7 @@ def _callers_tsv(sections: list[TheorySection], subject: str,
         hit = owner.get(caller)
         if site is not None:
             sec, line, encl = site
-            tag = encl.tag if encl else ""
+            tag = encl.tag if encl else "TOPLEVEL"
         elif hit is not None:
             sec, e = hit
             line, tag = e.thy_line, e.tag
@@ -1506,8 +1511,26 @@ def _callers_tsv(sections: list[TheorySection], subject: str,
             print(f"{subject}\t{caller}\t\t\t\t{depth}\t")
             continue
         thy = labels.get(sec.path, sec.theory)
+        if caller is None:
+            caller = f"{thy}:<toplevel>"
         print(f"{subject}\t{caller}\t{tag}\t{thy}\t{sec.session or ''}\t"
               f"{depth}\t{thy}:{line}")
+
+
+def _toplevel_site(graph: CallGraph, depths: dict[str, int], node: str,
+                   depth: int):
+    """Where a `<toplevel>` closure member cites its way in, or None for an
+    entry (located at its declaration instead).
+
+    A synthetic caller has no declaration line.  Its locus is its first
+    citation of a name one step nearer the subject -- the edge that put it in
+    the closure at this depth -- so the row points at the line responsible."""
+    site = graph.toplevel.get(node)
+    if site is None:
+        return None
+    sec, first = site
+    line = min(ln for m, ln in first.items() if depths.get(m) == depth - 1)
+    return (sec, line, None)
 
 
 def cmd_callers(sections: list[TheorySection], name: str,
@@ -1531,12 +1554,14 @@ def cmd_callers(sections: list[TheorySection], name: str,
                 _fail_subject(f"'{name}' is not in the entry index")
                 return
         reachable = _bfs_depths(lambda n: graph.callers.get(n, set()), {name})
-        reachable.pop(name, None)
         if tsv:
-            _callers_tsv(sections, subject, flags,
-                         [(n, d, None) for n, d in
-                          sorted(reachable.items(), key=lambda x: (x[1], x[0]))])
+            rows = [(n, d, _toplevel_site(graph, reachable, n, d))
+                    for n, d in sorted(reachable.items(),
+                                       key=lambda x: (x[1], x[0]))
+                    if n != name]
+            _callers_tsv(sections, subject, flags, rows)
             return
+        reachable.pop(name, None)
         _render_graph_results(sections, reachable, "caller", name, flags)
         return
 
@@ -1546,7 +1571,7 @@ def cmd_callers(sections: list[TheorySection], name: str,
         rows = []
         for sec, line_no, _text in hits:
             encl = _enclosing_entry(sec, line_no)
-            rows.append((encl.name if encl else "?", 1, (sec, line_no, encl)))
+            rows.append((encl.name if encl else None, 1, (sec, line_no, encl)))
         _callers_tsv(sections, subject, flags, rows)
         return
     if flags.mode == "count":
