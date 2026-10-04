@@ -24,3 +24,4 @@
 - [isabelle export triggers a build](isabelle-export-builds.md) — it is NOT read-only; read the session .db (`isabelle_exports`, Zstd) read-only with sqlite instead
 - [CLAUDE.md is a guideline, not authority](claude-md-is-guideline-not-authority.md) — when a project doc and the actual facts disagree, follow the facts and amend the doc
 - [Reuse infrastructure, don't reinvent](reuse-infrastructure-not-reinvent.md) — the steer is NOT "reduce regex" (regex is often right); it's don't reinvent tables Isabelle/query already own — enumerate methods from a running Isabelle offline, keep the declarative keyword-block scan; runtime stays pure-Python
+- [Autoclose issues in commits](autoclose-issues-in-commits.md) — a commit addressing a GitHub issue carries `Fixes #N` so it closes on push to main
