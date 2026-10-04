@@ -123,5 +123,41 @@ class AnUnknownSubjectFailsTheBatch(SubjectLoop):
         self.assertEqual(out.split(), ["2", "0"])
 
 
+class CallersTsvNamesEveryRow(SubjectLoop):
+    """`callers -f tsv` [callers-tsv]: subject, caller, tag, theory, session,
+    depth, locus -- every row attributed, several subjects one table."""
+
+    def rows(self, out):
+        return [ln.split("\t") for ln in out.splitlines()]
+
+    def test_the_closure_with_depths(self):
+        code, out, _ = self.run_cli("callers", "-r", "-f", "tsv", "base")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.rows(out), [
+            ["base", "mid", "LEMMA", "A", "S", "1", "A:3"],
+            ["base", "other", "LEMMA", "A", "S", "1", "A:5"],
+            ["base", "top", "LEMMA", "A", "S", "2", "A:4"],
+        ])
+
+    def test_located_hits(self):
+        _, out, _ = self.run_cli("callers", "-f", "tsv", "base")
+        self.assertEqual(self.rows(out), [
+            ["base", "mid", "LEMMA", "A", "S", "1", "A:3"],
+            ["base", "other", "LEMMA", "A", "S", "1", "A:5"],
+        ])
+
+    def test_several_subjects_are_one_table(self):
+        _, out, _ = self.run_cli("callers", "-r", "-f", "tsv",
+                                 "mid", "top", "base")
+        self.assertNotIn("\n\n", out)
+        self.assertEqual([r[0] for r in self.rows(out)],
+                         ["mid", "base", "base", "base"])   # top: none
+
+    def test_counts_are_labelled(self):
+        _, out, _ = self.run_cli("callers", "-r", "-c", "-f", "tsv",
+                                 "base", "top")
+        self.assertEqual(self.rows(out), [["base", "3"], ["top", "0"]])
+
+
 if __name__ == "__main__":
     unittest.main()

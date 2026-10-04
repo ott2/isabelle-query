@@ -447,6 +447,7 @@ _DROP_NAMES_UPTO = 1
 class CmdFlags:
     """Uniform flag bundle passed to command functions."""
     mode: str = "first"          # first / all / count / names
+    fmt: str = "text"            # -f / --format: text / tsv (callers)
     verbatim: bool = False       # -V / --verbatim
     statement: bool = False      # --statement / --stmt
                                  # find: match the statement slice (input);

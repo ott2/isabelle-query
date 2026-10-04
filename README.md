@@ -34,7 +34,7 @@ query theory MyTheory      # entries in a theory (-n for terse names)
 query find <regex>         # search entry names (--statement: search statements; --and: all patterns)
 query show <name>          # a named entry's declaration + body
 query enclosing FILE:LINE  # which entry + proof block owns a line; inverse of outline
-query callers <name> [-r]  # who references a name  (reverse; -r = transitive)
+query callers <name> [-r]  # who references a name  (reverse; -r = transitive; -f tsv: a table)
 query callees <name> [-r]  # what a name references (forward)
 query deps <theory> [-r]   # what a theory imports  (forward; reverse: uses)
 query refs <theory>        # what a theory cites, by owning theory (citation-level)

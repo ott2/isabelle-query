@@ -340,6 +340,7 @@ def _flags_from_ns(ns: argparse.Namespace) -> CmdFlags:
     f.drop_names_upto = getattr(ns, "drop_names_upto", _DROP_NAMES_UPTO)
     f.reach = getattr(ns, "reach", "closure")
     f.sorts = getattr(ns, "sorts", False)
+    f.fmt = getattr(ns, "out_format", "text")
     return f
 
 
@@ -803,7 +804,7 @@ def _scope_to_theories(ns: argparse.Namespace,
     return kept
 
 
-def _run_each(ns: argparse.Namespace, attr: str, fn) -> None:
+def _run_each(ns: argparse.Namespace, attr: str, fn, sep: str = "\n") -> None:
     """Load sections once, then apply ``fn(sections, subject)`` to each subject
     in ``getattr(ns, attr)``, blank-line-separated — the shared spine of the
     list-taking subcommands (``deps``/``uses``/``find``/``show``/``callers``/
@@ -838,7 +839,9 @@ def _run_each(ns: argparse.Namespace, attr: str, fn) -> None:
         blocks.append(buf.getvalue())
     if failed:
         sys.exit(EXIT_UNRESOLVED)
-    sys.stdout.write("\n".join(blocks))
+    # `sep` is the blank line between blocks; a table format passes "" so
+    # several subjects make one table.
+    sys.stdout.write(sep.join(blocks))
 
 
 def _run_summary(ns: argparse.Namespace) -> None:
@@ -898,7 +901,8 @@ def _run_show(ns: argparse.Namespace) -> None:
 
 def _run_callers(ns: argparse.Namespace) -> None:
     flags = _flags_from_ns(ns)
-    _run_each(ns, "name", lambda secs, n: cmd_callers(secs, n, flags))
+    _run_each(ns, "name", lambda secs, n: cmd_callers(secs, n, flags),
+              sep="" if flags.fmt == "tsv" else "\n")
 
 def _run_callees(ns: argparse.Namespace) -> None:
     flags = _flags_from_ns(ns)
@@ -1445,6 +1449,12 @@ def _build_parser() -> argparse.ArgumentParser:
                         "affects the non-recursive form; "
                         "transitive closure via -r ignores this flag.")
     _add_reach_flag(p)
+    p.add_argument("-f", "--format", dest="out_format",
+                   choices=("text", "tsv"), default="text",
+                   help="tsv: one row per caller, every row naming its "
+                        "subject, no header -- subject, caller, tag, theory, "
+                        "session, depth, locus.  With -c, `subject<TAB>count`. "
+                        "Several subjects make one table, not blocks")
     p.set_defaults(func=_run_callers)
 
     # callees

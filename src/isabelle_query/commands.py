@@ -1470,29 +1470,85 @@ def cmd_codeqs(sections: list[TheorySection], name: str,
     _emit_sites(sections, rows, name, "code equation", flags)
 
 
+def _callers_tsv(sections: list[TheorySection], subject: str,
+                 flags: 'CmdFlags', rows: list) -> None:
+    """`callers -f tsv`: one row per caller, each naming its subject [callers-tsv].
+
+    Columns: subject, caller, tag, theory, session, depth, locus.  No header,
+    so several subjects concatenate into one table.  Issue #14: the block
+    output names its subject only when there are no callers, so a script had
+    to attribute blocks by position, and recovered each caller's SESSION by
+    globbing theory files -- a fact query already holds.
+
+    ``rows`` is ``(caller, depth, site)``: ``site`` is ``(section, line,
+    enclosing entry)`` for a located hit (plain `callers`, depth 1), or None
+    for a closure member
+    (`-r`), which is located at its declaration.  The theory is the locus
+    label, qualified only as far as it must be, so the locus pastes back into
+    `enclosing` like every other locus query prints."""
+    if flags.mode == "count":
+        print(f"{subject}\t{len(rows)}")
+        return
+    labels = locus_labels(sections)
+    owner: dict[str, tuple[TheorySection, Entry]] = {}
+    for sec in sections:                       # first wins, as _entry_by_name
+        for e in sec.entries:
+            owner.setdefault(e.name, (sec, e))
+    for caller, depth, site in rows:
+        hit = owner.get(caller)
+        if site is not None:
+            sec, line, encl = site
+            tag = encl.tag if encl else ""
+        elif hit is not None:
+            sec, e = hit
+            line, tag = e.thy_line, e.tag
+        else:
+            print(f"{subject}\t{caller}\t\t\t\t{depth}\t")
+            continue
+        thy = labels.get(sec.path, sec.theory)
+        print(f"{subject}\t{caller}\t{tag}\t{thy}\t{sec.session or ''}\t"
+              f"{depth}\t{thy}:{line}")
+
+
 def cmd_callers(sections: list[TheorySection], name: str,
                 flags: 'CmdFlags') -> None:
     """Print proof-body usages of a lemma/definition."""
+    tsv = flags.fmt == "tsv"
+    subject = name               # as typed: what a TSV row is attributed to
     if flags.recursive:
         graph = _call_graph(sections, flags)
         if name not in graph.all_names:
             bound = _resolve_binding(sections, name)
             if bound is not None:
                 parent, how = bound
+                # A note, not an answer: in a table it would be a malformed
+                # row, so there it goes to stderr.
                 print(f"# '{name}' is {how} {parent}; "
                       f"recursive caller closure operates at the {parent} "
-                      f"(entry) level.")
+                      f"(entry) level.", file=sys.stderr if tsv else None)
                 name = parent
             else:
                 _fail_subject(f"'{name}' is not in the entry index")
                 return
         reachable = _bfs_depths(lambda n: graph.callers.get(n, set()), {name})
         reachable.pop(name, None)
+        if tsv:
+            _callers_tsv(sections, subject, flags,
+                         [(n, d, None) for n, d in
+                          sorted(reachable.items(), key=lambda x: (x[1], x[0]))])
+            return
         _render_graph_results(sections, reachable, "caller", name, flags)
         return
 
     hits = _find_callers(sections, name, external=flags.external,
                          reach=flags.reach)
+    if tsv:
+        rows = []
+        for sec, line_no, _text in hits:
+            encl = _enclosing_entry(sec, line_no)
+            rows.append((encl.name if encl else "?", 1, (sec, line_no, encl)))
+        _callers_tsv(sections, subject, flags, rows)
+        return
     if flags.mode == "count":
         print(len(hits))
         return
