@@ -30,7 +30,7 @@ cannot (yet) check.
 
 ```sh
 query summary              # theory overview table (-S: corpus/session aggregate)
-query theory MyTheory      # entries in a theory (-n for terse names)
+query theory MyTheory      # entries in a theory (--names for terse names)
 query find <regex>         # search entry names (--statement: search statements; --and: all patterns)
 query show <name>          # a named entry's declaration + body
 query enclosing FILE:LINE  # which entry + proof block owns a line; inverse of outline
