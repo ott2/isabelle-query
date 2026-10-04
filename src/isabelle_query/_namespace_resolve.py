@@ -241,6 +241,49 @@ def save_cache(session: str, payload: dict) -> None:
         json.dumps(payload, indent=1, sort_keys=True), encoding="utf-8")
 
 
+def _heaps_state(version_id: str) -> str:
+    """A spawn-free digest of every heap under the heap search path: path,
+    size and mtime.  One glob, as `_built_sessions` does.
+
+    Whether a session's dump CAN succeed depends on more than its own heap: a
+    child heap whose parent was rebuilt after it fails with "The parent for this
+    saved state does not match", and one whose parent heap is missing fails
+    with "Missing heap image".  Either clears when *some* heap changes, so a
+    recorded failure is keyed on all of them."""
+    stats = []
+    for d in _heaps_dirs(version_id):
+        for p in sorted(glob.glob(os.path.join(d, "*", "*"))):
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            stats.append(f"{p}\0{st.st_size}\0{st.st_mtime_ns}")
+    return hashlib.sha256("\n".join(stats).encode()).hexdigest()[:16]
+
+
+def _failure_path(session: str) -> Path:
+    return _cache_dir() / f"namespace-{session}.failed.json"
+
+
+def _failed_before(session: str, key: str) -> bool:
+    try:
+        rec = json.loads(_failure_path(session).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return rec.get("key") == key
+
+
+def _record_failure(session: str, key: str, reason: str) -> None:
+    try:
+        d = _cache_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        _failure_path(session).write_text(
+            json.dumps({"key": key, "session": session, "reason": reason},
+                       indent=1), encoding="utf-8")
+    except OSError:
+        pass   # recording is an optimisation; never fail a query over it
+
+
 def _committed() -> tuple[frozenset, frozenset]:
     from isabelle_query._isabelle_namespace import ATTRIBUTES, PROOF_METHODS
     return PROOF_METHODS, ATTRIBUTES
@@ -269,9 +312,21 @@ def resolve_namespace(session: str = "HOL", *, allow_isabelle: bool = True,
     # Dump only when the heap already exists: `ML_process -l S` would *build* an
     # absent session, and the no-build guarantee is non-negotiable.  A missing
     # heap is skipped, never built.
-    have_heap = _heap_file(_version_id(_isabelle_bin()), session) is not None
+    vid = _version_id(_isabelle_bin())
+    have_heap = _heap_file(vid, session) is not None
+    # A dump that failed against these exact heaps fails again [stale-heap-dump]:
+    # recorded, so a stale heap costs one Isabelle spawn rather than one per
+    # invocation (1.6 s each, measured on a development mid-rebuild).
+    fail_key = f"{fp}:{_heaps_state(vid)}" if fp and have_heap else ""
+    if fail_key and _failed_before(session, fail_key):
+        have_heap = False
     if fp and allow_isabelle and have_heap:
-        methods, attribs, theory, _proc = dump(session, dirs=dirs)
+        methods, attribs, theory, proc = dump(session, dirs=dirs)
+        if not (methods or attribs) and proc is not None:
+            # Not a timeout (proc is None there, and may be machine load): the
+            # process ran and produced no table.
+            out = (proc.stderr or proc.stdout or "").strip().splitlines()
+            _record_failure(session, fail_key, out[-1] if out else "")
         if methods or attribs:
             payload = {"fingerprint": fp, "session": session, "theory": theory,
                        "methods": sorted(_base(methods)),

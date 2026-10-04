@@ -120,6 +120,63 @@ class Resolve(unittest.TestCase):
                 self.assertEqual(nc.load_cache("HOL")["fingerprint"], "FP2")
 
 
+class AFailedDumpIsNotRepeated(unittest.TestCase):
+    """A dump that failed against these heaps is not re-run [stale-heap-dump].
+
+    Only a successful dump was cached, so a session whose heap Isabelle cannot
+    load — a child built before its parent was rebuilt, or one whose parent's
+    heap is missing — spawned Isabelle on every invocation, 1.6 s each, and two
+    such sessions were 3.3 s of a 5.3 s warm `callers -r`.  The failure is now
+    recorded against the session fingerprint AND the state of every heap, since
+    rebuilding the parent is what clears it.
+    """
+
+    FAILED = (set(), set(), None,
+              mock.Mock(returncode=1, stdout="",
+                        stderr='Exception- Fail "The parent for this saved '
+                               'state does not match"'))
+
+    def _resolve(self, dump, heaps="H1"):
+        with mock.patch.object(nc, "isabelle_fingerprint", return_value="FP"), \
+             mock.patch.object(nc, "_heap_file", return_value=Path("/h")), \
+             mock.patch.object(nc, "_heaps_state", return_value=heaps), \
+             mock.patch.object(nc, "dump", dump):
+            return nc.resolve_namespace("Child")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._env = mock.patch.dict(os.environ,
+                                    {"QUERY_CACHE_DIR": self._tmp.name})
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+        self._tmp.cleanup()
+
+    def test_the_second_call_does_not_spawn(self):
+        first = mock.Mock(return_value=self.FAILED)
+        self.assertEqual(self._resolve(first)["source"], "committed")
+        self.assertEqual(first.call_count, 1)
+        again = mock.Mock(side_effect=AssertionError("dumped again"))
+        self.assertEqual(self._resolve(again)["source"], "committed")
+
+    def test_a_changed_heap_retries(self):
+        self._resolve(mock.Mock(return_value=self.FAILED), heaps="H1")
+        ok = mock.Mock(return_value=({"simp"}, {"OF"}, "Main", None))
+        r = self._resolve(ok, heaps="H2")    # e.g. the parent was rebuilt
+        self.assertEqual(ok.call_count, 1)
+        self.assertEqual(r["source"], "isabelle")
+
+    def test_a_timeout_is_not_recorded(self):
+        # `dump` returns process None on a timeout, which may be load on the
+        # machine rather than anything about the heaps.
+        timed_out = (set(), set(), None, None)
+        self._resolve(mock.Mock(return_value=timed_out))
+        retry = mock.Mock(return_value=timed_out)
+        self._resolve(retry)
+        self.assertEqual(retry.call_count, 1)
+
+
 class Augmented(unittest.TestCase):
     """Two-tier resolution: base unioned with a session's active table, and the
     no-build guarantee (a session with no heap is skipped, never built)."""
