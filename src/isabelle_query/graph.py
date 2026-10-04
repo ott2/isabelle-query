@@ -40,6 +40,7 @@ from isabelle_query.model import (
     TheorySection,
     _CITABLE_TAGS,
     _DROP_NAMES_UPTO,
+    locus_labels,
 )
 from isabelle_layout import parse_thy_imports
 from isabelle_query.parsing import ISA_SYMBOL, ISA_WORD_CHAR, _line_mask
@@ -805,7 +806,11 @@ def _build_call_graph(sections: list[TheorySection],
     quoted_findall = quoted_re.findall
 
     vis = _Visibility(sections, reach)
+    labels = locus_labels(sections)
     for sec in sections:
+        # Named by the theory's LABEL, not its bare name: over a corpus, same-
+        # named theories would otherwise share one node [toplevel-label].
+        top_name = f"{labels.get(sec.path, sec.theory)}:<toplevel>"
         # The redacted view (`live_source`), not the raw source: a comment, an
         # `\<^cancel>` region or an inline ML body that SHARES its line with
         # live proof text is blanked in place, so `by simp (* see foo *)` stops
@@ -874,7 +879,7 @@ def _build_call_graph(sections: list[TheorySection],
             # own `equal_*` definition exists.  Attribute them to a synthetic
             # per-theory top-level caller so the edge exists and carries a place.
             caller_name = (caller_entry.name if caller_entry is not None
-                           else f"{sec.theory}:<toplevel>")
+                           else top_name)
             for name in cand:
                 d_ranges = d_map.get(name)
                 if d_ranges and any(line_no in r for r in d_ranges):

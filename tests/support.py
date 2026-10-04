@@ -42,6 +42,7 @@ if str(_SRC) not in sys.path:
 from isabelle_query import cli  # noqa: E402
 from isabelle_query import _namespace_resolve as _nsr  # noqa: E402
 from isabelle_query import graph  # noqa: E402
+from isabelle_query.model import locus_labels  # noqa: E402
 from isabelle_query.parsing import _balanced_end  # noqa: E402
 
 
@@ -179,6 +180,7 @@ def brute_force_call_graph(sections, drop_upto=cli._DROP_NAMES_UPTO,
     line_index = cli._build_line_index(sections)
     callers = {n: set() for n in name_set}
     callees = {}
+    labels = locus_labels(sections)
     for sec in sections:
         # Mirrors the fast builder: both read the redacted view, so a comment
         # sharing its line with proof text cites nothing in either.
@@ -208,7 +210,7 @@ def brute_force_call_graph(sections, drop_upto=cli._DROP_NAMES_UPTO,
                     continue
                 # An entryless citation is a top-level command (`instance`,
                 # `lemmas`, `export_code`): a real use with no owning entry.
-                caller = ce.name if ce is not None else f"{sec.theory}:<toplevel>"
+                caller = ce.name if ce is not None else f"{labels.get(sec.path, sec.theory)}:<toplevel>"
                 callers[name].add(caller)
                 callees.setdefault(caller, set()).add(name)
     return cli.CallGraph(callers=callers, callees=callees, all_names=name_set)
