@@ -15,7 +15,6 @@ commands that consume them, not here.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
 from pathlib import Path
 
 from isabelle_query.model import (
@@ -23,98 +22,10 @@ from isabelle_query.model import (
     CmdFlags,
     Entry,
     TheorySection,
+    locus_labels,
+    theory_labels,
 )
 from isabelle_query.parsing import LATEX_LINE_RE, _proof_extent
-
-
-def theory_labels(sections: "Iterable[TheorySection]") -> dict[Path, str]:
-    r"""``{resolved path: the shortest directory-qualified name unique here}``.
-
-    A theory prints as its bare name, which is right for a session and wrong
-    for a corpus: **461 AFP theory names are used by more than one theory**,
-    covering 1,219 of its 9,910 — `Examples` names nineteen different files.
-    A `largest` run over the AFP was a wall of unqualified `Bla` with no way
-    to tell one from another [disambig-names].
-
-    Qualified by the *minimal distinguishing* suffix, not by the full path.
-    Two reasons, and the second is the load-bearing one:
-
-    * a shared root prefix carries no information — every row would gain the
-      same `thys/` and be no easier to read;
-    * the name is INPUT as well as output.  `theory:line` is meant to round-
-      trip, so the emitter has to qualify far enough for the resolver to get
-      back to one theory, and no further.  Since [name-roundtrip] a name
-      containing a separator resolves *as a name*, so `List_Space/Bla` is not
-      mistaken for a path that does not exist — which is what makes a
-      qualified label paste-able.
-
-    Scoped to the sections actually being shown, so a single-session run keeps
-    bare `Bla` and only a genuine collision grows a prefix.  Two sections at
-    the same resolved path are one theory and share a label.
-
-    The label grows from the theory's declared NAME with its directory chain
-    in front, not from the file's stem.  Isabelle requires the two to agree
-    (`theory Foo` must live in `Foo.thy`) so on disk it is usually the same
-    string, and three things follow from preferring the name anyway:
-
-    * a section parsed from a BUFFER has no such file, and taking the stem
-      made a label out of the scratch file's name.  A label whose unqualified
-      case is not what every other verb prints is not a label;
-    * a ROOT may spell a theory with a directory (`theories "While/Hoare"`),
-      and then the NAME already carries it — 902 AFP theories, which now
-      label as themselves rather than as a bare `Hoare` that no verb accepts;
-    * it decides collisions on the right thing.  Growing from stems qualified
-      1,316 AFP labels, growing from names qualifies **1,219**: the extra 97
-      were theories whose FILES collide while their declared names do not,
-      given a prefix that separated nothing a reader could ever have typed.
-    """
-    by_path: dict[Path, list[str]] = {}
-    for sec in sections:
-        p = sec.path.resolve()
-        if p not in by_path:
-            by_path[p] = list(p.parent.parts) + [sec.theory]
-    labels: dict[Path, str] = {}
-    pending = dict(by_path)
-    depth = 1
-    while pending:
-        groups: dict[str, list[Path]] = {}
-        for p, parts in pending.items():
-            groups.setdefault("/".join(parts[-depth:]), []).append(p)
-        nxt: dict[Path, list[str]] = {}
-        for label, paths in groups.items():
-            if len(paths) == 1:
-                labels[paths[0]] = label
-            else:
-                for p in paths:
-                    # Exhausted: the paths are equal, so no suffix separates
-                    # them.  Settle rather than loop — a label that repeats is
-                    # a poor answer, an infinite loop is not an answer.
-                    if depth >= len(pending[p]):
-                        labels[p] = label
-                    else:
-                        nxt[p] = pending[p]
-        pending = nxt
-        depth += 1
-    return labels
-
-
-def locus_labels(sections: "Iterable[TheorySection]") -> dict[Path, str]:
-    r"""``theory_labels`` re-keyed by each section's path *as stored*.
-
-    The emitter-side view.  ``theory_labels`` keys on the RESOLVED path, so
-    that two spellings of one file are one theory and one label; a located hit
-    carries the section's path as the section holds it, and resolving that per
-    ROW is a syscall per row — `grep obtain` over the AFP prints 73,296 of
-    them.  Resolving once per section and looking the stored path up is the
-    same answer for free.
-
-    Use it wherever a ``theory:line`` is printed.  A theory NAME cannot be the
-    key: 461 AFP theory names are shared, which is the whole reason the label
-    exists [disambig-loci].
-    """
-    sections = list(sections)
-    labels = theory_labels(sections)
-    return {sec.path: labels[sec.path.resolve()] for sec in sections}
 
 
 def file_locus(labels: dict[Path, str], path: Path) -> str:
