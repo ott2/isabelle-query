@@ -32,6 +32,7 @@ from isabelle_query.model import (
     _BINDING_KINDS,
     _CITABLE_TAGS,
     _DEFINITION_TAGS,
+    label_chain,
 )
 from isabelle_query.parsing import ISA_SYMBOL, _isa_word_pattern
 from isabelle_query.graph import (
@@ -296,14 +297,13 @@ def _resolve_theory(sections: list[TheorySection], name: str) -> TheorySection |
         # A label that looks paste-able and lands on a DIFFERENT theory is a
         # worse answer than a bare ambiguous name, which at least reads as
         # ambiguous.  Only a unique hit counts; anything else falls through.
-        # Matched against the directory chain plus the declared theory NAME —
-        # the exact tuple `render.theory_labels` builds the label out of, so
-        # the two cannot drift.  (On disk the name is the stem, since Isabelle
-        # requires it; a buffer-parsed section is where they part company.)
+        # Matched against `label_chain` — the exact tuple `theory_labels`
+        # builds the label out of, so the two cannot drift [label-depth].
+        # (On disk the name is the stem, since Isabelle requires it; a
+        # buffer-parsed section is where they part company.)
         want = tuple(Path(name).with_suffix("").parts)
         hits = [s for s in sections
-                if (s.path.resolve().parent.parts
-                    + (s.theory,))[-len(want):] == want]
+                if label_chain(s)[-len(want):] == want]
         if len(hits) == 1:
             return hits[0]
         # Path that doesn't match a known section: fall back to its

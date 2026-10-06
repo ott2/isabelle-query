@@ -6,8 +6,8 @@ named by the BARE theory name, so same-named theories (AFP has nineteen
 `Examples`) shared one node [toplevel-label]; it is now named by the locus
 label.  This prints the node count -- 4,874 under the bare name, 5,244 under
 the label on the 2025-2 AFP, so 370 theories had been folded into another's
-node -- and any node whose prefix names more than one theory.  That is 0
-but for one label `theory_labels` itself gets wrong [label-depth].
+node -- and any node whose prefix names more than one theory, which must be 0.
+(It was 1 until [label-depth] made every label name one theory.)
 
 Usage: probe_toplevel_collisions.py ROOT
 """

@@ -20,6 +20,7 @@ without risking a cycle.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -481,6 +482,26 @@ class CmdFlags:
     sorts: bool = False
 
 
+def label_chain(sec: "TheorySection") -> tuple[str, ...]:
+    """The segments a theory's label is a suffix of: its resolved directory
+    chain, then its declared name split at `/`.
+
+    A ROOT may spell a theory with a directory (`theories "While/Hoare"`), and
+    then the file sits in that directory, so the name repeats the tail of the
+    chain.  The repeat is dropped, which keeps every suffix a real path suffix
+    -- `Van_Emde_Boas_Trees/Separation_Logic_Imperative_HOL/Automation`, not a
+    doubled `.../Separation_Logic_Imperative_HOL/Separation_Logic_Imperative_HOL
+    /Automation` that names no file.  Shared by :func:`theory_labels` and the
+    resolver's label match [label-depth].
+    """
+    parents = sec.path.resolve().parent.parts
+    segs = tuple(sec.theory.split("/"))
+    k = len(segs) - 1
+    if k and parents[len(parents) - k:] == segs[:-1]:
+        parents = parents[:-k]
+    return parents + segs
+
+
 def theory_labels(sections: "Iterable[TheorySection]") -> dict[Path, str]:
     r"""``{resolved path: the shortest directory-qualified name unique here}``.
 
@@ -521,32 +542,48 @@ def theory_labels(sections: "Iterable[TheorySection]") -> dict[Path, str]:
       1,316 AFP labels, growing from names qualifies **1,219**: the extra 97
       were theories whose FILES collide while their declared names do not,
       given a prefix that separated nothing a reader could ever have typed.
+
+    A label is unique among ALL suffixes, not among the suffixes of one length
+    [label-depth].  A path-spelled name is one string but several segments, so
+    comparing only like depths let Van_Emde_Boas_Trees' copy, NAMED
+    `Separation_Logic_Imperative_HOL/Automation`, settle on that string at
+    depth 1 while the genuine `Separation_Logic_Imperative_HOL/Automation.thy`
+    settled on the same string at depth 2.  The two printed alike and the
+    label resolved to the copy.  Built over :func:`label_chain`, the tuple the
+    resolver matches too, so the two cannot disagree.
     """
-    by_path: dict[Path, list[str]] = {}
+    chains: dict[Path, tuple[str, ...]] = {}
+    least: dict[Path, int] = {}
+    named: dict[str, set[Path]] = {}
     for sec in sections:
         p = sec.path.resolve()
-        if p not in by_path:
-            by_path[p] = list(p.parent.parts) + [sec.theory]
+        if p not in chains:
+            chains[p] = label_chain(sec)
+            least[p] = sec.theory.count("/") + 1   # never cut the name itself
+            named.setdefault(sec.theory, set()).add(p)
     labels: dict[Path, str] = {}
-    pending = dict(by_path)
+    pending = dict(least)
     depth = 1
     while pending:
-        groups: dict[str, list[Path]] = {}
-        for p, parts in pending.items():
-            groups.setdefault("/".join(parts[-depth:]), []).append(p)
-        nxt: dict[Path, list[str]] = {}
-        for label, paths in groups.items():
-            if len(paths) == 1:
-                labels[paths[0]] = label
+        # A label is safe when the resolver takes it back to THIS theory.  It
+        # tries an exact theory name first, so a label that is some theory's
+        # name is safe only if it is this one's; otherwise it matches a suffix
+        # of the chain, so no other chain may end in it.  Counted over every
+        # theory, settled or not.
+        held = Counter("/".join(c[-depth:]) for c in chains.values())
+        nxt: dict[Path, int] = {}
+        for p, low in pending.items():
+            chain = chains[p]
+            label = "/".join(chain[-depth:])
+            # Exhausted: the chains are equal, so no suffix separates them.
+            # Settle rather than loop — a label that repeats is a poor answer,
+            # an infinite loop is not an answer.
+            owner = named.get(label)
+            safe = owner == {p} if owner else held[label] == 1
+            if depth >= low and (safe or depth >= len(chain)):
+                labels[p] = label
             else:
-                for p in paths:
-                    # Exhausted: the paths are equal, so no suffix separates
-                    # them.  Settle rather than loop — a label that repeats is
-                    # a poor answer, an infinite loop is not an answer.
-                    if depth >= len(pending[p]):
-                        labels[p] = label
-                    else:
-                        nxt[p] = pending[p]
+                nxt[p] = low
         pending = nxt
         depth += 1
     return labels

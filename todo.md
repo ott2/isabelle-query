@@ -292,16 +292,6 @@ in `CONTRIBUTING.md`.
       but over a different node set (files, not entries).  Record the
       need; don't build until the scope call is made.
 
-- [ ] `[label-depth]` `theory_labels` compares candidate labels only at the
-      same suffix depth, so a label settled at depth 1 can equal another
-      theory's label at depth 2.  The one AFP case: Van_Emde_Boas_Trees' ROOT
-      spells its copy `Separation_Logic_Imperative_HOL/Automation`, whose bare
-      name is already the depth-2 label of the genuine
-      `Separation_Logic_Imperative_HOL/Automation.thy`.  Both print as that
-      string, so a locus naming either is ambiguous on the way back in.
-      Found by `scripts/probe_toplevel_collisions.py` (exits 1 on it).  The fix
-      is to settle a label only if no other theory holds it at any depth.
-
 ## Done
 
 Nothing — by design. Completed work is recorded in its commit messages, which
