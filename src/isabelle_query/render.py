@@ -249,7 +249,8 @@ def render_entry(sec: TheorySection, entry: Entry, *,
                  verbatim: bool = False,
                  statement: bool = False,
                  comments: str = "on",
-                 context: int = 2) -> str:
+                 context: int = 2,
+                 rank: tuple[int, int] | None = None) -> str:
     """Render a single entry.
 
     statement:       just the declaration slice [thy_line..decl_end_line]
@@ -261,13 +262,17 @@ def render_entry(sec: TheorySection, entry: Entry, *,
     comments='only': preamble (full) + header + annotations (full, grouped by
                      which part of the entry each one annotates), no statement
     context:         lines of preamble preview / annotations shown
+    rank:            `(k, n)` when this is match k of n, shown in the header
+                     as `[k of n]` [show-match-count]
 
     `statement` and `verbatim` are opposite ends of the slice spectrum
     (declaration-only vs declaration+proof); `show` declares them mutually
     exclusive at the CLI.  If both somehow arrive, the narrower one wins.
     """
     ext = _format_extent(entry)
-    header = f"--- {entry.name} ({entry.tag}) — {sec.theory}.thy {ext} ---"
+    pos = f"[{rank[0]} of {rank[1]}] " if rank else ""
+    header = (f"--- {entry.name} ({entry.tag}) — {sec.theory}.thy "
+              f"{pos}{ext} ---")
 
     # No source location (e.g. AXIOM placeholder) → fall back to entry.text
     if not entry.thy_line:
@@ -382,13 +387,23 @@ def _emit_matches(sections_by_theory: dict[str, TheorySection],
         print(f"No entries matching '{pattern}'.")
         return
 
+    # Each header carries `[k of n]` when there is more than one match
+    # [show-match-count].  The footer below says so too, but it is the first
+    # line `head` or a line filter drops, and a caller who lost it concluded
+    # that `show` collapsed a twice-defined name (issue #17).
+    n = len(matches)
+
+    def rank(k: int) -> tuple[int, int] | None:
+        return (k, n) if n > 1 else None
+
     if flags.mode == "all":
-        for e in matches:
+        for k, e in enumerate(matches, start=1):
             print(render_entry(sections_by_theory[e.theory], e,
                                verbatim=flags.verbatim,
                                statement=statement,
                                comments=flags.comments,
-                               context=flags.context))
+                               context=flags.context,
+                               rank=rank(k)))
             print()
         return
 
@@ -398,7 +413,8 @@ def _emit_matches(sections_by_theory: dict[str, TheorySection],
                        verbatim=flags.verbatim,
                        statement=statement,
                        comments=flags.comments,
-                       context=flags.context))
+                       context=flags.context,
+                       rank=rank(1)))
     if len(matches) > 1:
         print()
         print(f"[+{len(matches) - 1} more match(es).  Use --all to show, "
