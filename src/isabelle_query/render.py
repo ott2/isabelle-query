@@ -26,6 +26,7 @@ from isabelle_query.model import (
     theory_labels,
 )
 from isabelle_query.parsing import LATEX_LINE_RE, _proof_extent
+from isabelle_query.premises import statement_of
 
 
 def file_locus(labels: dict[Path, str], path: Path) -> str:
@@ -245,12 +246,65 @@ def _statement_text(sec: TheorySection, entry: Entry) -> str:
     return "\n".join(sec.slice(entry.thy_line, entry.decl_end_line))
 
 
+def _entry_header(sec: TheorySection, entry: Entry,
+                  rank: tuple[int, int] | None = None) -> str:
+    pos = f"[{rank[0]} of {rank[1]}] " if rank else ""
+    return (f"--- {entry.name} ({entry.tag}) — {sec.theory}.thy "
+            f"{pos}{_format_extent(entry)} ---")
+
+
+def render_premises(sec: TheorySection, entry: Entry,
+                    rank: tuple[int, int] | None = None) -> str:
+    r"""The `--premises` view [show-premises]: the header, one line per
+    premise keyed by the name a proof cites it by, then the conclusion count.
+
+        --- foo (LEMMA) — T.thy [src 2..7, 6 lines] ---
+          assms(1) wf:  well_formed M
+          assms(2):     0 < q
+          defines:      d \<equiv> x
+          shows: 2 conclusions
+
+    A premise written inside the term (`"P \<Longrightarrow> C"`) has no such
+    name and is keyed `term k`.  When the statement cannot be read the view
+    says so, rather than print a count it does not know."""
+    out = [_entry_header(sec, entry, rank)]
+    st = statement_of(sec, entry)
+    if st is None:
+        if entry.tag in ("LEMMA", "THEOREM"):
+            out.append("  (statement not recognised; see --statement)")
+        else:
+            out.append(f"  (no goal statement: a {entry.tag})")
+        return "\n".join(out)
+    rows: list[tuple[str, str]] = []
+    terms = 0
+    for p in st.premises:
+        if p.kind == "term":
+            terms += 1
+            key = f"term {terms}"
+        elif p.kind == "defines":
+            key = " ".join(x for x in ("defines", p.label) if x)
+        else:
+            key = " ".join(x for x in (p.cite, p.label) if x)
+        rows.append((key + ":", p.text))
+    width = max((len(k) for k, _t in rows), default=0)
+    out.extend(f"  {k:<{width}}  {t}" for k, t in rows)
+    if not rows:
+        out.append("  (no premises)")
+    if st.cases:
+        out.append(f"  obtains: {st.cases} case{'s' * (st.cases != 1)}")
+    else:
+        out.append(f"  shows: {st.conclusions} "
+                   f"conclusion{'s' * (st.conclusions != 1)}")
+    return "\n".join(out)
+
+
 def render_entry(sec: TheorySection, entry: Entry, *,
                  verbatim: bool = False,
                  statement: bool = False,
                  comments: str = "on",
                  context: int = 2,
-                 rank: tuple[int, int] | None = None) -> str:
+                 rank: tuple[int, int] | None = None,
+                 premises: bool = False) -> str:
     """Render a single entry.
 
     statement:       just the declaration slice [thy_line..decl_end_line]
@@ -264,15 +318,15 @@ def render_entry(sec: TheorySection, entry: Entry, *,
     context:         lines of preamble preview / annotations shown
     rank:            `(k, n)` when this is match k of n, shown in the header
                      as `[k of n]` [show-match-count]
+    premises:        the `--premises` view instead (:func:`render_premises`)
 
     `statement` and `verbatim` are opposite ends of the slice spectrum
     (declaration-only vs declaration+proof); `show` declares them mutually
     exclusive at the CLI.  If both somehow arrive, the narrower one wins.
     """
-    ext = _format_extent(entry)
-    pos = f"[{rank[0]} of {rank[1]}] " if rank else ""
-    header = (f"--- {entry.name} ({entry.tag}) — {sec.theory}.thy "
-              f"{pos}{ext} ---")
+    if premises:
+        return render_premises(sec, entry, rank)
+    header = _entry_header(sec, entry, rank)
 
     # No source location (e.g. AXIOM placeholder) → fall back to entry.text
     if not entry.thy_line:
@@ -403,7 +457,8 @@ def _emit_matches(sections_by_theory: dict[str, TheorySection],
                                statement=statement,
                                comments=flags.comments,
                                context=flags.context,
-                               rank=rank(k)))
+                               rank=rank(k),
+                               premises=flags.premises))
             print()
         return
 
@@ -414,7 +469,8 @@ def _emit_matches(sections_by_theory: dict[str, TheorySection],
                        statement=statement,
                        comments=flags.comments,
                        context=flags.context,
-                       rank=rank(1)))
+                       rank=rank(1),
+                       premises=flags.premises))
     if len(matches) > 1:
         print()
         print(f"[+{len(matches) - 1} more match(es).  Use --all to show, "

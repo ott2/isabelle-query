@@ -32,7 +32,7 @@ cannot (yet) check.
 query summary              # theory overview table (-S: corpus/session aggregate)
 query theory MyTheory      # entries in a theory (--names for terse names)
 query find <regex>         # search entry names (--statement: search statements; --and: all patterns)
-query show <name>          # a named entry's declaration + body
+query show <name>          # a named entry's declaration + body (--premises: just what it assumes)
 query enclosing FILE:LINE  # which entry + proof block owns a line; inverse of outline
 query callers <name> [-r]  # who references a name  (reverse; -r = transitive; -f tsv: a table)
 query callees <name> [-r]  # what a name references (forward)

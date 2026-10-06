@@ -323,6 +323,7 @@ def _flags_from_ns(ns: argparse.Namespace) -> CmdFlags:
         f.mode = "count"
     f.verbatim = getattr(ns, "verbatim", False)
     f.statement = getattr(ns, "statement", False)
+    f.premises = getattr(ns, "premises", False)
     if getattr(ns, "no_comments", False):
         f.comments = "off"
     elif getattr(ns, "comments_only", False):
@@ -1414,12 +1415,18 @@ def _build_parser() -> argparse.ArgumentParser:
                           extra="each name is matched exact-then-substring")
     _add_mode_flags(p)
     # `-V` (full slice) and `--statement` (declaration only) are opposite
-    # ends of the slice spectrum, so they can't be combined.
+    # ends of the slice spectrum, so they can't be combined; `--premises` is
+    # narrower than either, a different view rather than a slice.
     slice_group = p.add_mutually_exclusive_group()
     _add_verbatim_flag(slice_group)
     _add_statement_flag(
         slice_group, help_text="render only the statement slice (the "
                                "declaration, without the proof)")
+    slice_group.add_argument(
+        "--premises", action="store_true",
+        help="one line per premise, keyed by how a proof cites it "
+             "(assms(k) / that(k), plus its label), then the number of "
+             "conclusions: short however long the statement is")
     _add_comment_flags(p)
     _add_context_flag(p)
     p.set_defaults(func=_run_show)

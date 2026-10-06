@@ -462,6 +462,7 @@ class CmdFlags:
     statement: bool = False      # --statement / --stmt
                                  # find: match the statement slice (input);
                                  # show: render only the statement slice (output)
+    premises: bool = False       # --premises (show): one line per premise
     comments: str = "on"         # on / off / only
     context: int = 2             # -U N / --context N
     with_comments: bool = False  # --with-comments (find + grep: search prose)
