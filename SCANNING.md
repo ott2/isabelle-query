@@ -55,7 +55,7 @@ Isar is whitespace-insensitive, so a declaration is recognised wherever a
 *command* can start — at any indentation and at any block depth, inside a
 `locale`, a `context`, or a theory body its author simply chose to indent.
 Declarations end at a real terminator: the next command, or an `end` /
-`context` / `lemmas` / `ML`.
+`context` / `declare` / `ML`.
 
 A blank line ends nothing structural, and a rule or equation list spaced out for
 legibility is still one declaration — a line beginning `|` cannot start a new
@@ -94,6 +94,12 @@ its constants and its labelled axioms are written one per line and each is
 independently locatable, so each *is* an entry. `and` separates them within a
 line as readily as it ends one, so `axiomatization f :: ty and g :: ty` declares
 two.
+
+`lemmas` follows `axiomatization`: `lemmas a = x y and b = z` binds two facts,
+each with its own right-hand side, so each is an entry (tagged `LEMMAS`) and
+cites only its own facts. A citation of `a` is then a use of `x` and `y`, and
+`callers -r x` passes through it. A group with no name, as in `lemmas [simp] =
+foo`, only attaches an attribute; it binds nothing and is not an entry.
 
 This matters for precision as much as recall. A name the tool cannot find has no
 declaration site to exclude, so its own definition reads as a citation of

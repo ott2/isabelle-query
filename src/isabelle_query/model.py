@@ -421,7 +421,7 @@ _DEFINITION_TAGS = frozenset(
 #
 # Ordered, so a display can iterate them in the order they appear in source.
 _ANNOTATION_KINDS = ("decl", "statement", "proof")
-_CITABLE_TAGS = frozenset({"LEMMA", "THEOREM", "FUN", "DEF", "ABBREV"})
+_CITABLE_TAGS = frozenset({"LEMMA", "THEOREM", "LEMMAS", "FUN", "DEF", "ABBREV"})
 
 # The kinds of extra name an `Entry` may bind (see `Entry.bindings`), each with
 # the phrasing a command uses to explain the resolution to the reader.  They

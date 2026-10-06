@@ -1305,7 +1305,9 @@ def find_code_equations(sections: list[TheorySection], name: str
         # 1. Declarations: the entry grammar already knows where a statement
         #    ends (`Entry.decl_end_line`), so there is no second scan for it.
         for e in sec.entries:
-            if e.thy_line <= 0:
+            # A `lemmas` entry has no statement of its own: its `[code]` is
+            # read by step 3, with every other `lemmas` [lemmas-entries].
+            if e.thy_line <= 0 or e.tag == "LEMMAS":
                 continue
             stop = min(max(e.decl_end_line, e.thy_line), len(live))
             if e.thy_line > stop:
@@ -1367,8 +1369,8 @@ def find_code_equations(sections: list[TheorySection], name: str
                     raw[e.thy_line - 1].rstrip(), entry_name,
                     written_type(head_live, head_outer, e.name)))
 
-        # 3. `declare` / `lemmas`, which declare no entry and so are
-        #    invisible to the loop above.
+        # 3. `declare` / `lemmas`, whose attribute is attached to facts that
+        #    already exist (a `lemmas` entry is skipped by the loop above).
         for i in range(1, len(outer) + 1):
             stripped = outer[i - 1].lstrip()
             if not stripped.startswith(("declare ", "lemmas ",

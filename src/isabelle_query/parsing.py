@@ -44,7 +44,7 @@ from isabelle_query.model import Entry, TheorySection, blank_all
 # It stays a whole-word test (`definitions`/`inductively` do not match), and
 # being zero-width it leaves the `line[len(keyword):]` slicing untouched.
 DECL_RE = re.compile(
-    r"^(definition|abbreviation|function|fun|primrec|inductive_set|inductive|lemma|corollary|proposition|theorem|axiomatization|datatype|type_synonym|record|locale|class)(?=\s|$)"
+    r"^(definition|abbreviation|function|fun|primrec|inductive_set|inductive|lemmas|theorems|lemma|corollary|proposition|theorem|axiomatization|datatype|type_synonym|record|locale|class)(?=\s|$)"
 )
 
 TAG_MAP = {
@@ -60,6 +60,11 @@ TAG_MAP = {
     # (`summary`'s two counts) and has no counterpart in Isabelle.
     "lemma": "LEMMA", "corollary": "LEMMA", "proposition": "LEMMA",
     "theorem": "THEOREM",
+    # `lemmas a = b c` binds a new name to existing facts [lemmas-entries]:
+    # no statement and no proof, but a citable fact all the same, and the
+    # names on its right-hand side are what it cites.  `theorems` is the same
+    # command under another display string (Pure.thy declares both).
+    "lemmas": "LEMMAS", "theorems": "LEMMAS",
     "axiomatization": "AXIOM",
     "datatype": "DATATYPE", "type_synonym": "TYPE", "record": "RECORD",
     # A locale/class DECLARES a name — `find hpk` found nothing, and its
@@ -125,6 +130,8 @@ def _route_for(keyword: str, tag: str) -> str:
         return "typedecl"
     if tag in ("LEMMA", "THEOREM"):
         return "goal"
+    if tag == "LEMMAS":
+        return "facts"
     return "def"  # DEF, ABBREV, FUN, INDSET, IND, and custom thy_decl/thy_defn
 
 PROOF_RE = re.compile(
@@ -815,6 +822,63 @@ def _and_siblings(outer: list[str], start: int, end: int, own: str,
         name = m.group(1) or m.group(2)
         if name != own and name not in found:
             found.append(name)
+    return found
+
+
+# `lemmas` / `theorems` [lemmas-entries].  Isabelle's grammar is
+#
+#     lemmas (in TARGET)? (thmdef? thms) and ... for_fixes?
+#     thmdef = NAME [attrs]? =
+#
+# so a group binds a name only when it opens `NAME =` or `NAME [attrs] =`; a
+# group without one (`lemmas [simp] = foo`, `lemmas foo [simp]`) declares an
+# attribute and binds nothing.  Over 11,604 theories (`probe_lemmas_forms.py`)
+# 11,889 commands bind one name, 2,964 none, and about 50 several.
+_THMDEF_RE = re.compile(rf"\s*({_ISA_NAME})\s*(?:\[[^\]]*\]\s*)?=(?!=)")
+_THMS_TOKEN_RE = re.compile(r"[\[\]()]|(?<![\w'])and(?![\w'])")
+_IN_TARGET_PREFIX_RE = re.compile(r"\s*\(\s*in\s+[^)]*\)")
+
+
+def _thmdefs(outer: list[str], start: int, end: int,
+             col: int) -> list[tuple[str, int, int]]:
+    """`(name, first line, last line)` for each named group of the `lemmas`
+    command on lines `start..end`, whose keyword ends at column `col` of line
+    `start`.
+
+    Read on the outer view, so an `and` or `=` inside a term (`[of "a = b"]`)
+    is blanked and cannot split a group.  A group's lines run from its own
+    `and` (the command line, for the first) to the line before the next
+    group's, or to `end`.
+    """
+    text = "\n".join(outer[start - 1:end])
+    m = _IN_TARGET_PREFIX_RE.match(text, col)
+    pos = m.end() if m else col
+    starts, depth = [pos], 0
+    for t in _THMS_TOKEN_RE.finditer(text, pos):
+        tok = t.group()
+        if tok in "[(":
+            depth += 1
+        elif tok in "])":
+            depth -= 1
+        elif depth == 0:
+            starts.append(t.end())
+
+    def line_of(k: int) -> int:
+        return start + text.count("\n", 0, k)
+
+    # A later group starts on the line of its own first token, so in
+    # `four = base and` / `five = other` the first line is `four`'s alone; the
+    # first group starts on the command line.
+    firsts = [start] + [line_of(len(text) - len(text[k:].lstrip()))
+                        for k in starts[1:]]
+    found: list[tuple[str, int, int]] = []
+    for g, k in enumerate(starts):
+        m = _THMDEF_RE.match(text, k)
+        if not m:
+            continue
+        last = (max(firsts[g], firsts[g + 1] - 1) if g + 1 < len(starts)
+                else end)
+        found.append((m.group(1), firsts[g], last))
     return found
 
 
@@ -2187,6 +2251,31 @@ def extract_entries(lines: list[str],
                                      (r, "rule") for r in _rule_labels(
                                          outer, decl_line, decl_end_line,
                                          name)]))
+            continue
+
+        # --- `lemmas` / `theorems`: names bound to existing facts ---
+        if route == "facts":
+            # One entry per bound name: `lemmas a = x and b = y` declares two
+            # facts, and a citation of `b` is a use of `y` alone.  An anonymous
+            # command declares nothing and stays a `<toplevel>` citation.
+            i, decl_end_line, _body = _scan_decl_body(
+                lines, outer, live, open_at, table, i + 1, decl_line, keyword)
+            for name, first, last in _thmdefs(
+                    outer, decl_line, decl_end_line, indent + len(keyword)):
+                head = lines[first - 1]
+                if first == decl_line:      # past the command word
+                    head = head[indent + len(keyword):]
+                text = "\n".join(
+                    [f"{tag} {head.strip()}".rstrip()]
+                    + [f"  {ln.strip()}" for ln in lines[first:last]
+                       if ln.strip()])
+                entries.append(Entry(tag, name, text, thy_line=first,
+                                     decl_end_line=last))
+                # `(in foo)` is written once, on the command line, and
+                # `_attach_targets` reads an entry's own first line.
+                mt = _IN_TARGET_RE.search(outer[decl_line - 1])
+                if mt:
+                    entries[-1].in_target = mt.group(1)
             continue
 
         # --- Lemmas / theorems / corollaries ---

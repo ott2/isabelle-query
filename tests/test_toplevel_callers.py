@@ -1,6 +1,6 @@
 """The synthetic `<toplevel>` caller [toplevel-label].
 
-A citation outside every entry (`lemmas`, `declare`, `instance`) is attributed
+A citation outside every entry (`declare`, `instance`, an anonymous `lemmas`) is attributed
 to a per-theory node `THEORY:<toplevel>`.  It used to be named by the BARE
 theory name, so over a corpus two same-named theories (AFP has nineteen
 `Examples`) shared one node: the closure counted them once, and nothing could
@@ -42,8 +42,8 @@ end
 
 # Top-level citations of `base` on line 2 and `mid` on line 3, in both.
 A = """theory A imports "S0.Base" begin
-lemmas alias = base
-lemmas alias2 = mid
+declare base [simp]
+declare mid [simp]
 end
 """
 
@@ -142,7 +142,7 @@ class TsvRowsAreFilled(TwoTheoriesNamedA):
         # `base` <- `mid` <- alpha/A, which now cites only `mid`.
         (Path(self.root) / "alpha" / "A.thy").write_text(
             'theory A imports "S0.Base" begin\n'
-            'lemmas alias2 = mid\n'
+            'declare mid [simp]\n'
             'end\n')
         _, out, _ = self.run_cli("callers", "-r", "-f", "tsv", "base")
         alpha = [r for r in self.rows(out) if r[3] == "alpha/A"]

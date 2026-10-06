@@ -147,7 +147,7 @@ class OracleParity(unittest.TestCase):
 
 lemma bar: "(0::nat) = 0" by simp
 
-lemmas bar_alias [simp] = bar
+declare bar [simp]
 
 end
 '''
@@ -160,7 +160,8 @@ end
 
     def test_toplevel_citation_matches_oracle(self):
         sec = section_from(self.TOPLEVEL, "T")
-        # The citation is a `lemmas` line owned by no entry.
+        # The citation is a `declare` line owned by no entry.  (A named
+        # `lemmas` is an entry of its own [lemmas-entries].)
         self.assertIn("T:<toplevel>", cli._build_call_graph([sec]).callers["bar"])
         self.assertParity([sec], derived=False)
 
