@@ -581,6 +581,9 @@ def _find_in_comments(sections: list[TheorySection], pat: re.Pattern,
 def cmd_show(sections: list[TheorySection], name: str,
              flags: "CmdFlags") -> None:
     by_theory = _sections_by_theory(sections)
+    # A note, not an answer: under `--names` / `--count` it would be read as a
+    # name or break the number, so there it goes to stderr.
+    note = sys.stderr if flags.mode in ("names", "count") else None
     matches: list[Entry] = []
     for s in sections:
         for e in s.entries:
@@ -604,13 +607,19 @@ def cmd_show(sections: list[TheorySection], name: str,
                         how = _BINDING_KINDS[kind]
         if matches:
             parents = ", ".join(sorted({e.name for e in matches}))
-            print(f"# '{name}' is {how} {parents}:")
+            print(f"# '{name}' is {how} {parents}:", file=note)
     if not matches:
-        # Substring fallback
+        # Substring fallback.  Said so up front [show-near-names]: a near name
+        # rendered under a header of its own reads as the answer, and `show
+        # table_tape_len` printed `dth_descriptor_table_tape_length` as if it
+        # were (issue #16).
         for s in sections:
             for e in s.entries:
                 if name.lower() in e.name.lower():
                     matches.append(e)
+        if matches:
+            print(f"# no entry named '{name}'; {len(matches)} whose name "
+                  f"contains it:", file=note)
     # On `show`, `--statement` is the render selector: declaration only.
     _emit_matches(by_theory, matches, name, flags, statement=flags.statement)
 
