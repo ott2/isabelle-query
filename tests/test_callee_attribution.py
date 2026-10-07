@@ -31,10 +31,15 @@ THYS = {
     "Guess": 'theory Guess\nimports Main\nbegin\n'
              'definition tape :: "nat" where "tape = 1"\n'
              'lemma local_use: "tape = 1" by (simp add: tape_def)\nend\n',
+    # Loads before `Top`, and cannot see `pass_lemma`: its `wrap` is not a
+    # caller of it, whatever the name says.
+    "Lone": 'theory Lone\nimports Main\nbegin\n'
+            'lemma wrap: "True" by simp\nend\n',
     "Sim": 'theory Sim\nimports Guess\nbegin\n'
            'lemma pass_lemma: "tape = 1" by (simp add: tape_def)\nend\n',
     "Top": 'theory Top\nimports Sim\nbegin\n'
-           'lemma top_lemma: "True" using pass_lemma by simp\nend\n',
+           'lemma top_lemma: "True" using pass_lemma by simp\n'
+           'lemma wrap: "True" using pass_lemma by simp\nend\n',
     # Both visible: `Guess` directly, `Arms` through `Mid`.
     "Mid": 'theory Mid\nimports Arms\nbegin\nend\n',
     "Near": 'theory Near\nimports Mid Guess\nbegin\n'
@@ -95,6 +100,33 @@ class TheVisibleDeclaration(Fixture):
         # `local_use` cites its own theory's `tape`; first-wins called it
         # cross-theory because `Arms` is not `Guess`.
         self.assertEqual(self.rows("local_use", external=True), [])
+
+
+class TheCallerThatCanReachTheSeed(Fixture):
+    """`callers -r` the other way round: a caller row keeps the declarations
+    whose theory can see the seed."""
+
+    def out(self, **kw):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            commands.cmd_callers(self.sections, "pass_lemma",
+                                 CmdFlags(recursive=True, **kw))
+        return [ln.strip() for ln in buf.getvalue().splitlines()
+                if "wrap" in ln]
+
+    def test_block(self):
+        self.assertEqual(self.out(), ["wrap (LEMMA) — Top [L5]"])
+
+    def test_names(self):
+        self.assertEqual(self.out(mode="names"), ["wrap (LEMMA) — Top"])
+
+    def test_tsv(self):
+        self.assertEqual(self.out(fmt="tsv"),
+                         ["pass_lemma\twrap\tLEMMA\tTop\tDemo\t1\tTop:5"])
+
+    def test_name_mode_lists_both(self):
+        self.assertEqual(self.out(reach="name"),
+                         ["wrap (LEMMA) — Lone [L4]", "wrap (LEMMA) — Top [L5]"])
 
 
 if __name__ == "__main__":

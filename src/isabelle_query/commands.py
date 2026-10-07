@@ -1021,6 +1021,37 @@ def _seen_from(sections: list[TheorySection], seed: str,
     return lambda n: vis.visible(decls.get(n, []), home)
 
 
+def _seeing(sections: list[TheorySection], seed: str,
+            reach: str) -> Callable[[str], Declarations]:
+    """Each name's declarations whose theory can see some declaration of
+    ``seed`` — the `callers -r` direction of :func:`_seen_from`
+    [callee-attribution].
+
+    Necessary, not sufficient: a caller at any depth cites its way down to
+    the seed, so its theory's closure holds one of the seed's.  A declaration
+    that fails it cannot be the caller, and dropping it is all this does.
+    Every declaration under ``reach="name"``, or when a closure cannot be
+    read, or when none passes — the rule may only drop where it is confident.
+    """
+    decls = _declarations_by_name(sections)
+    vis = _graph._Visibility(sections, reach, memo_closures=True)
+    targets = {sec.theory for sec, _e in decls.get(seed, ())}
+
+    def resolve(n: str) -> Declarations:
+        ds = decls.get(n, [])
+        if reach != "closure" or len(ds) < 2:
+            return ds
+        kept = []
+        for sec, e in ds:
+            depths = vis.depths(sec.theory)
+            if depths is None:
+                return ds
+            if not targets.isdisjoint(depths):
+                kept.append((sec, e))
+        return kept or ds
+    return resolve
+
+
 def _render_graph_results(sections: list[TheorySection],
                           reachable: dict[str, int],
                           label: str, seed: str,
@@ -1514,7 +1545,9 @@ def cmd_codeqs(sections: list[TheorySection], name: str,
 
 
 def _callers_tsv(sections: list[TheorySection], subject: str,
-                 flags: 'CmdFlags', rows: list) -> None:
+                 flags: 'CmdFlags', rows: list,
+                 resolve: Callable[[str], Declarations] | None = None,
+                 ) -> None:
     """`callers -f tsv`: one row per caller, each naming its subject [callers-tsv].
 
     Columns: subject, caller, tag, theory, session, depth, locus.  No header,
@@ -1533,31 +1566,30 @@ def _callers_tsv(sections: list[TheorySection], subject: str,
     A citation no entry owns is tagged TOPLEVEL and named `THEORY:<toplevel>`
     in both modes, with its theory and session filled (issue #15).  Plain mode
     passes its caller as None and the name is minted here; `-r` passes the
-    graph's node, located by :func:`_toplevel_site`."""
+    graph's node, located by :func:`_toplevel_site`.
+
+    A closure member is resolved to its declarations by ``resolve``
+    (:func:`_seeing`), one row each, so a name declared twice is not placed
+    in a theory that cannot reach the subject [callee-attribution]."""
     if flags.mode == "count":
         print(f"{subject}\t{len(rows)}")
         return
     labels = locus_labels(sections)
-    owner: dict[str, tuple[TheorySection, Entry]] = {}
-    for sec in sections:                       # first wins, as _entry_by_name
-        for e in sec.entries:
-            owner.setdefault(e.name, (sec, e))
+    resolve = resolve or _first_wins(sections)
     for caller, depth, site in rows:
-        hit = owner.get(caller)
         if site is not None:
             sec, line, encl = site
-            tag = encl.tag if encl else "TOPLEVEL"
-        elif hit is not None:
-            sec, e = hit
-            line, tag = e.thy_line, e.tag
+            located = [(sec, line, encl.tag if encl else "TOPLEVEL")]
         else:
+            located = [(sec, e.thy_line, e.tag) for sec, e in resolve(caller)]
+        if not located:
             print(f"{subject}\t{caller}\t\t\t\t{depth}\t")
             continue
-        thy = labels.get(sec.path, sec.theory)
-        if caller is None:
-            caller = f"{thy}:<toplevel>"
-        print(f"{subject}\t{caller}\t{tag}\t{thy}\t{sec.session or ''}\t"
-              f"{depth}\t{thy}:{line}")
+        for sec, line, tag in located:
+            thy = labels.get(sec.path, sec.theory)
+            who = caller if caller is not None else f"{thy}:<toplevel>"
+            print(f"{subject}\t{who}\t{tag}\t{thy}\t{sec.session or ''}\t"
+                  f"{depth}\t{thy}:{line}")
 
 
 def _toplevel_site(graph: CallGraph, depths: dict[str, int], node: str,
@@ -1597,15 +1629,17 @@ def cmd_callers(sections: list[TheorySection], name: str,
                 _fail_subject(f"'{name}' is not in the entry index")
                 return
         reachable = _bfs_depths(lambda n: graph.callers.get(n, set()), {name})
+        resolve = _seeing(sections, name, flags.reach)
         if tsv:
             rows = [(n, d, _toplevel_site(graph, reachable, n, d))
                     for n, d in sorted(reachable.items(),
                                        key=lambda x: (x[1], x[0]))
                     if n != name]
-            _callers_tsv(sections, subject, flags, rows)
+            _callers_tsv(sections, subject, flags, rows, resolve)
             return
         reachable.pop(name, None)
-        _render_graph_results(sections, reachable, "caller", name, flags)
+        _render_graph_results(sections, reachable, "caller", name, flags,
+                              resolve)
         return
 
     hits = _find_callers(sections, name, external=flags.external,
