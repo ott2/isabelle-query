@@ -129,5 +129,30 @@ class TheCallerThatCanReachTheSeed(Fixture):
                          ["wrap (LEMMA) — Lone [L4]", "wrap (LEMMA) — Top [L5]"])
 
 
+class CallersOfACollidingName(Fixture):
+    """Issue #18 item 2: `callers NAME` for a name declared twice says so,
+    and groups the sites by the declarations each can see."""
+
+    def out(self, name="tape"):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            commands.cmd_callers(self.sections, name, CmdFlags(context=0))
+        # A row is reduced to its locus; headers are kept whole.
+        return [ln.split()[0] if ln.startswith("  ") else ln
+                for ln in buf.getvalue().splitlines() if ln]
+
+    def test_grouped(self):
+        # `Guess` and `Sim` see Guess's `tape` alone; `Near` imports both.
+        self.assertEqual(self.out(), [
+            "3 caller(s) of tape, which has 2 declarations:",
+            "tape (DEF) — Guess [L4]: 2 caller(s)",
+            "Guess:5", "Sim:4",
+            "tape, any of 2: (DEF) — Arms [L4]; (DEF) — Guess [L4]: 1 caller(s)",
+            "Near:4"])
+
+    def test_one_declaration_is_unchanged(self):
+        self.assertEqual(self.out("pass_lemma")[0], "2 caller(s) of pass_lemma:")
+
+
 if __name__ == "__main__":
     unittest.main()

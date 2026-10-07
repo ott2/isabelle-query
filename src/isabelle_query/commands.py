@@ -1657,7 +1657,6 @@ def cmd_callers(sections: list[TheorySection], name: str,
     if not hits:
         print(f"No callers found for '{name}'.")
         return
-    n_after = max(0, flags.context)
     # Align the match loci into a column; each is a clean `theory:line` that
     # pastes into `enclosing` / `lines` / an editor (no trailing marker) — and
     # is qualified far enough to name one theory, so what pastes back is the
@@ -1665,7 +1664,45 @@ def cmd_callers(sections: list[TheorySection], name: str,
     labels = locus_labels(sections)
     loci = [f"{labels.get(s.path, s.theory)}:{ln}" for s, ln, _ in hits]
     loc_w = max((len(loc) for loc in loci), default=0)
-    print(f"{len(hits)} caller(s) of {name}:\n")
+    decls = [(sec, e) for sec in sections for e in sec.entries
+             if e.name == name or name in e.bound_names]
+    if len(decls) < 2:
+        print(f"{len(hits)} caller(s) of {name}:\n")
+        _print_caller_rows(hits, loci, loc_w, flags)
+        return
+    # Declared more than once: group the sites by the declarations each can
+    # see, so two unrelated `sim_tape`s are not one list [callee-attribution].
+    vis = _graph._Visibility(sections, flags.reach, bound_names=True)
+    index = {id(e): i for i, (_s, e) in enumerate(decls)}
+    groups: dict[tuple[int, ...], list[int]] = {}
+    for k, (sec, _ln, _t) in enumerate(hits):
+        seen = vis.visible(decls, [sec.theory])
+        groups.setdefault(tuple(sorted(index[id(e)] for _s, e in seen)),
+                          []).append(k)
+
+    def decl(i: int) -> str:
+        sec, e = decls[i]
+        return f"({e.tag}) — {labels.get(sec.path, sec.theory)} [L{e.thy_line}]"
+
+    print(f"{len(hits)} caller(s) of {name}, "
+          f"which has {len(decls)} declarations:")
+    for key in sorted(groups, key=lambda g: (len(g), g)):
+        ks = groups[key]
+        # A corpus name can be in reach many times over (`mono`, 40+), so
+        # the list is capped; the rows below still say where each site is.
+        shown = "; ".join(decl(i) for i in key[:3])
+        more = f"; +{len(key) - 3} more" if len(key) > 3 else ""
+        which = (f"{name} {decl(key[0])}" if len(key) == 1 else
+                 f"{name}, any of {len(key)}: {shown}{more}")
+        print(f"\n{which}: {len(ks)} caller(s)\n")
+        _print_caller_rows([hits[k] for k in ks], [loci[k] for k in ks],
+                           loc_w, flags)
+
+
+def _print_caller_rows(hits: list, loci: list[str], loc_w: int,
+                       flags: 'CmdFlags') -> None:
+    """The located rows of `callers`, each with its owner and ``-A`` context."""
+    n_after = max(0, flags.context)
     for (sec, line_no, text), loc in zip(hits, loci):
         encl = _enclosing_entry(sec, line_no)
         print(f"  {loc:<{loc_w}}  {_owner_field(encl)}  {text.strip()}")
