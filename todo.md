@@ -154,6 +154,18 @@ in `CONTRIBUTING.md`.
       real fix reports an unexpected success rather than going unnoticed.
       Low priority at 5 records: filed so the rejection is not re-litigated.
 
+- [ ] `[decl-identity]` The citation graph is keyed by NAME, so the verbs
+      that print ONE declaration per node still pick it first-wins in load
+      order: `graph citation`'s node table and `codeqs`'s `sec_by_name`.
+      `[callee-attribution]` (issue #18) fixed the rows of `callees`,
+      `callers -r` and `callers NAME` by asking visibility again at render
+      time; those two cannot, since a node there is one record.  Over the AFP,
+      66% of edges into a name declared in several theories were rendered at a
+      declaration the citer could not see (`scripts/probe_callee_attribution.py`).
+      The real fix is declaration-keyed nodes, which moves every graph verb.
+      Related and separate: the index has one namespace, so `datatype t` and
+      `definition t` collide (NDTHT's `sim_tape`: 13 `Diagonal_Arms` sites are
+      "any of 2", though Isabelle reads each as the type, unambiguously).
 - [ ] `[feature-audit]` Standing critical pass over each subcommand:
       output formats, defaults, and past design choices.  Re-benchmark
       against AWS AutoCorrode's `iq` tool

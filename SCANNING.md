@@ -180,6 +180,17 @@ is. The bulk citation graph (`callees`, `refs`, `unused`, `graph citation`)
 keys on entries only, since it has no bound-name nodes, so its totals do not
 move.
 
+The graph is keyed by **name**, so an edge says only that *some* declaration of
+the name is visible. A row that names a declaration therefore asks again which
+one: `callees` lists every declaration the subject's theory can see, nearest by
+import depth first, and `callers -r` places each caller in a theory that can see
+the subject. When a name has several declarations, `callers NAME` says so in its
+header and groups the sites by the declarations each one can see. A site that
+sees more than one is listed under "any of", because two visible theories
+declaring one name is a collision the index cannot resolve. The index also keeps
+types and constants in one namespace, so a `datatype t` and a `definition t`
+collide here even though they never do in Isabelle.
+
 `--reach name` restores name-only matching, on `callers`, `callees`, `unused`,
 `graph` and `refs` — every verb the scoping moves. `instances` and `codeqs`
 have no such switch: an `interpretation L` in a theory that cannot see `L`'s
