@@ -662,6 +662,20 @@ def _line_commands(outer: str) -> list[tuple[int, str]]:
     return out
 
 
+def _command_kind(kw: str) -> str:
+    """A command's step kind, from its keyword alone: the segmenter already
+    knows the keyword, and re-reading the text could only add noise."""
+    if kw in _STEP_GOAL_KEYWORDS:
+        return "goal"
+    if kw in _CONTEXT_KEYWORDS:
+        return "context"
+    if kw in _STEP_PLUMBING_KEYWORDS:
+        return "plumbing"
+    if kw in _CLOSING_KEYWORDS or kw in (".", ".."):
+        return "closing"
+    return "other"
+
+
 def scan_commands(sec: TheorySection, entry: Entry) -> list[Command]:
     r"""Every Isar proof command in ``entry``'s proof body, in source order
     [step-command].
@@ -730,6 +744,7 @@ def _scan_steps(sec: TheorySection, entry: Entry,
     if commands is None:
         commands = scan_commands(sec, entry)
     lines = sec.source()
+    live = sec.live_source()
     outer = sec.outer_source()
     end = min(entry.body_end_line or entry.thy_end or len(lines), len(lines))
     steps: list[Step] = []
@@ -755,8 +770,9 @@ def _scan_steps(sec: TheorySection, entry: Entry,
         closes_subgoal = open_subgoals > 0 and c.kw in _TERMINAL_CMDS
         if closes_subgoal:
             open_subgoals -= 1
-        raw = lines[c.line - 1]
-        text = " " * c.col + raw[c.col:c.end]
+        # The command's text from the LIVE view: comments blank, terms kept,
+        # so a `(* ... have ... *)` lends it neither a kind nor a statement.
+        text = " " * c.col + live[c.line - 1][c.col:c.end]
         stripped = text.strip()
         step_depth = max(0, open_blocks - 1)
         cur_block = block_stack[-1] if block_stack else 0
@@ -774,7 +790,7 @@ def _scan_steps(sec: TheorySection, entry: Entry,
             if block_stack:
                 block_stack.pop()
             continue
-        kind = _classify_step_line(stripped)
+        kind = _command_kind(c.kw)
         if kind == "goal":
             s_start, s_end, stmt = _extract_statement(
                 lines, c.line - 1, end - 1, first=text)

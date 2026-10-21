@@ -252,6 +252,21 @@ class CommandsInMidLine(unittest.TestCase):
         self.assertEqual([c.kw for c in shape.scan_commands(sec, sec.entries[0])],
                          ["proof", "have", "by", "show", "by", "qed"])
 
+    def test_a_comment_lends_a_command_no_kind(self):
+        # LSC:295, `proof(induction F) (* I should have ... *)`: the `have`
+        # in the comment made the `proof` a goal step.  A command's kind is
+        # its keyword's, and its text is read with comments blank.
+        thy = ('theory T imports Main begin\n'
+               'lemma t: "True"\n'
+               '  proof (cases x) (* I should have "False" *)\n'
+               '  show ?thesis by simp\n'
+               'qed\nend\n')
+        sec = section_from(thy, "T")
+        steps = shape._scan_steps(sec, sec.entries[0])
+        self.assertEqual([(s.kw, s.kind) for s in steps],
+                         [("show", "goal"), ("by", "closing"),
+                          ("qed", "closing")])
+
     def test_a_qualified_name_is_not_a_dot_proof(self):
         thy = ('theory T imports Main begin\n'
                'lemma t: "True"\n'
