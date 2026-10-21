@@ -94,8 +94,14 @@ class BareByConstruction(unittest.TestCase):
     def setUp(self):
         self.pm, self.by_line = kinds("by_construction")
 
-    def test_a_bare_also_states_nothing_of_its_own(self):
-        self.assertEqual(self.by_line[8], "construction")
+    def test_a_bare_also_is_not_a_goal_at_all(self):
+        # `also` is a chain command (prf_decl, Pure.thy:81), not a goal, so it
+        # has no bare kind because it is not a goal step [step-command].  It
+        # used to be booked `construction` here when it stood on its own line,
+        # and not at all when it led `also have` — the layout decided.
+        self.assertNotIn(8, self.by_line)
+        kinds = {s.line: s.kind for s in self.pm.steps if s.kw == "also"}
+        self.assertEqual(kinds, {8: "plumbing"})
 
     def test_interpret_instantiates_rather_than_states(self):
         self.assertEqual(self.by_line[10], "construction")

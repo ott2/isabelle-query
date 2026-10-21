@@ -114,7 +114,7 @@ class Wiring(unittest.TestCase):
 
 _STEP_KEYS = {
     "theory", "lemma", "line", "block", "depth", "kind", "kw", "goal_cmd",
-    "method", "label", "stmt_start", "stmt_end", "w2_src", "w1_est",
+    "method", "label", "stmt_start", "stmt_end", "w2_src", "w1_est", "col",
     "w1_schematic_est", "w1_bound_est", "const_est", "const_canon_est",
     "fanin", "fanin_covered", "live", "introduces", "consumes",
 }

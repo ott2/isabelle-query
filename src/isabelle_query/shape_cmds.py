@@ -25,13 +25,15 @@ re-exports these ``cmd_shape_*`` through its facade).
 
 JSONL schema (the join contract — deliverable #2)
 -------------------------------------------------
-Two record shapes, both keyed by the stable ``(theory, lemma, line)`` position
-so a value can later be joined against a per-step LLM-tractability experiment
+Two record shapes, keyed by the stable ``(theory, lemma)`` position — plus
+``(line, col)`` for a step, since several commands may share a line — so a
+value can later be joined against a per-step LLM-tractability experiment
 with no re-instrumentation.  Estimator columns carry an ``_est`` suffix; exact
 source metrics do not.
 
 **Per-step record** (``shape steps --json``, ``shape lemma --json``,
-``shape widest --json``) — one object per Isar step:
+``shape widest --json``) — one object per Isar command (a step), wherever
+the line breaks fall:
 
 ===================  =========================================================
 key                  meaning
@@ -39,12 +41,13 @@ key                  meaning
 ``theory``           theory name (position key)
 ``lemma``            enclosing entry name (position key)
 ``line``             1-indexed source line of the command (position key)
+``col``              0-indexed column the command starts at (position key)
 ``block``            proof-block id (sibling blocks differ; M4/M6 group on it)
 ``depth``            proof-block nesting depth (0 = lemma's own proof body)
 ``kind``             ``goal`` / ``context`` / ``plumbing`` / ``closing`` / ``other``
-``kw``               leading command keyword (or ``.``/``..``)
-``goal_cmd``         fact-binding goal command (``from a have`` -> ``have``); ``""`` off goals
-``method``           discharge method (``by simp`` -> ``simp``, ``by (rule r)`` -> ``rule``); ``""`` if none
+``kw``               the command keyword (or ``.``/``..``)
+``goal_cmd``         fact-binding goal command; ``""`` off goals
+``method``           a ``by``/``apply`` step's method (``by simp`` -> ``simp``, ``by (rule r)`` -> ``rule``); ``""`` if none
 ``label``            the step's own fact label (``have key:`` -> ``key``)
 ``stmt_start``       1-indexed first line of the proposition span (0 if none)
 ``stmt_end``         1-indexed last line of the proposition span (0 if none)
@@ -52,11 +55,11 @@ key                  meaning
 ``w1_est``           **M1** distinct free variables (estimator)
 ``w1_schematic_est`` distinct schematic ``?vars`` (estimator)
 ``w1_bound_est``     distinct statement-local bound variables (estimator)
-``fanin``            **M5a** distinct facts cited for the step
+``fanin``            **M5a** distinct facts cited for a goal: its own, a ``from`` before it, ``using`` and methods after it
 ``fanin_covered``    ``false`` if a method shape could not be classified
 ``live``             **M5b** named facts simultaneously live at the step
 ``introduces``       **M5c** whether the step binds a reusable fact
-``consumes``         **M5c** whether the step cites at least one fact
+``consumes``         **M5c** a goal with ``fanin`` > 0, or a step citing facts no goal took
 ``frame_ratio``      **M3** mentioned/max(changed,1), or ``null`` — *only under --config*
 ``frame_mentioned``  M3 component accesses — *only under --config*
 ``frame_changed``    M3 changed components — *only under --config*
@@ -67,15 +70,16 @@ per proof-bearing entry: ``session`` (provenance: the Isabelle session the
 theory was declared by, ``null`` when the load had no session context — a corpus
 run needs it because 505 of 8,849 AFP theory names are used by more than one
 theory, so ``(theory, lemma)`` alone cannot say which entry a record came from),
-``theory``, ``lemma``, ``n_steps``, ``n_goals``,
+``theory``, ``lemma``, ``n_steps`` (Isar commands, not lines), ``n_goals``,
 ``n_bare``, ``depth_max`` (Length: max proof-block nesting, 1 = flat),
 ``w2_src_max``/``_mean``/``_p90``, ``w1_est_max``/``_mean``,
 ``fanin_max``/``_mean`` (**M5a** explicit source-cited premises per goal step),
 ``fanin_cited`` (goal steps citing ≥1 — the denominator of the *conditional*
 fan-in, the mean over citing steps only), ``live_max``/``_mean``,
 ``dag_ratio_est_max`` (**M4**),
-``introduce``, ``consume``, ``both`` (**M5c** introduce∧cite lines, so the
-three-way split is ``introduce - both`` / ``consume - both`` / ``both``),
+``introduce``, ``consume``, ``both`` (**M5c** steps that introduce, cite, and
+do both — a citation counted once, on the goal it serves — so the three-way
+split is ``introduce - both`` / ``consume - both`` / ``both``),
 ``ratio`` (``null`` when nothing consumed),
 ``trivial_frac`` (fraction of discharged steps closed by ``simp``/``auto``/…;
 ``null`` when nothing is discharged by a recognised method),

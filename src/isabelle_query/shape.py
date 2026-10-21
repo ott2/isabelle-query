@@ -18,29 +18,30 @@ The step model
 The existing parser sees a proof body as an opaque span (``Entry.proof_line`` ..
 ``Entry.body_end_line``) with a nested *block* structure (``commands._proof_blocks``).
 Neither resolves the individual Isar commands — the ``have`` / ``show`` /
-``from`` / ``by`` lines — that width metrics attach to.  :func:`_scan_steps`
-adds exactly that: it walks the live lines of one proof body and classifies each
-into one of four kinds (the keyword sets are shared with ``graph``):
+``from`` / ``by`` — that width metrics attach to.  :func:`scan_commands` finds
+them, splitting each line at the proof commands it holds, and
+:func:`_scan_steps` classifies each command into one of four kinds (the
+keyword sets are shared with ``graph``):
 
 * **goal**  — states or derives a proposition: ``have`` ``show`` ``hence``
-  ``thus`` ``obtain`` ``consider`` ``also`` ``finally`` ``interpret``.
-  Metrics attach here.
+  ``thus`` ``obtain`` ``consider`` ``interpret``.  Metrics attach here.
 * **context** — introduces variables/assumptions: ``fix`` ``assume``
   ``presume`` ``define`` ``let`` ``case``.
 * **plumbing** — moves facts without stating a goal: ``from`` ``using`` ``with``
-  ``note`` ``moreover`` ``ultimately`` ``then``.
+  ``note`` ``moreover`` ``ultimately`` ``then`` ``unfolding``, and the
+  calculation's ``also`` ``finally``.
 * **closing** — discharges a goal: ``by`` ``apply`` ``done`` ``qed`` ``.`` ``..``.
 
-Classification is deliberately conservative and *line-anchored*, matching the
-tool's existing scanners (``graph._scan_methods``, ``commands._proof_blocks``):
-one step per live proof line, keyed on the leading command sequence.  A line may
-combine kinds — ``from a have b: "P" by simp`` is plumbing + goal + closing — so
-a goal-stating command anywhere in the line's *command prefix* (the text before
-its **proposition**) wins the classification, and the leading plumbing /
-trailing closing are recorded on the goal :class:`Step` as fan-in sources.  A
-multi-command physical line is attributed to its goal command; the undercount of
-genuinely multi-*statement* lines matches the ethos of ``_scan_methods``
-(undercount, never overcount).
+**A step is an Isar command**, wherever the line breaks fall [step-command]:
+``from a have b: "P" by simp`` is a plumbing, a goal and a closing step, on
+one line or three.  Until #24 the unit was the line, keyed on its leading
+command sequence, so the same proof measured differently depending on where
+its author put ``using`` and ``by``.  The commands are found in the outer
+view, where terms and comments are blank, and outside parentheses, so
+neither a keyword in a proposition nor a method's argument splits anything.
+Citations still belong to goals: a ``from`` before a goal, and the ``using``
+and closing method after it, count in that goal's fan-in, and M5c counts each
+citation once, on the goal it serves.
 
 Locating that proposition is the delicate part, and getting it wrong cost 3.2%
 of the corpus's goal steps until issue #9.  It is *not* simply the line's first
@@ -112,6 +113,37 @@ _PROP_START_RE = re.compile(r'"|\\<open>')
 # Command-position tokens: identifiers/keywords and the bare-dot proof terminators.
 _CMD_TOKEN_RE = re.compile(r"\.\.|\.|[A-Za-z][\w']*")
 
+# `also` / `finally` are chain commands, not goals [step-command].  Isabelle
+# declares `also` `moreover` :: prf_decl and `finally` `ultimately` ::
+# prf_chain (Pure.thy:81-82), the kinds of `note` and `then`; neither states
+# anything.  `graph` keeps them among its goal words, where what matters is
+# that they end a fact list.  Here, where each command is a step, they are
+# plumbing — so `also have` is one goal whether or not the two share a line.
+_CALC_WORDS = frozenset({"also", "finally"})
+_STEP_GOAL_KEYWORDS = _GOAL_KEYWORDS - _CALC_WORDS
+_STEP_PLUMBING_KEYWORDS = _PLUMBING_KEYWORDS | _CALC_WORDS
+
+# Isabelle's proof-mode commands: every keyword Pure declares with a proof
+# kind (`prf_*`, `qed*`, `next_block`, Pure.thy:33-83; HOL adds none).  One
+# command ends where the next begins, so these are where a line splits into
+# steps [step-command].
+_PROOF_COMMANDS = frozenset({
+    "have", "hence", "show", "thus", "obtain", "consider", "interpret",
+    "then", "from", "with", "note", "supply", "using", "unfolding",
+    "include", "including", "fix", "assume", "presume", "define", "let",
+    "write", "case", "also", "moreover", "finally", "ultimately",
+    "{", "}", "next", "proof", "qed", "by", "..", ".", "sorry",
+    "\\<proof>", "done", "oops", "apply", "apply_end", "defer", "prefer",
+    "back", "subgoal",
+})
+# An outer-syntax token, as far as finding commands needs: a (possibly
+# qualified) name, so `1.prems` and `Foo.bar` are one token and only a
+# free-standing `.` / `..` is the command; a bracket; or a dot terminator.
+_SEG_TOKEN_RE = re.compile(
+    rf"{ISA_WORD_CHAR}+(?:\.{ISA_WORD_CHAR}+)*|\.\.|[.()\[\]{{}}]")
+_SEG_OPEN = frozenset("([")
+_SEG_CLOSE = frozenset(")]")
+
 
 def _split_command_prefix(text: str) -> tuple[str, int]:
     r"""Split a proof line into its command prefix and its proposition.
@@ -156,7 +188,7 @@ def _split_command_prefix(text: str) -> tuple[str, int]:
         segment = text[i:m.start()]
         out.append(segment)
         if not seen_goal:
-            seen_goal = any(t in _GOAL_KEYWORDS
+            seen_goal = any(t in _STEP_GOAL_KEYWORDS
                             for t in _CMD_TOKEN_RE.findall(segment))
         if seen_goal:
             return "".join(out), m.start()
@@ -197,12 +229,12 @@ def _classify_step_line(stripped: str) -> str:
         return "other"
     # A goal command anywhere before the proposition dominates (handles the
     # `<plumbing prefix> <goal> <statement>` chain form).
-    if any(t in _GOAL_KEYWORDS for t in tokens):
+    if any(t in _STEP_GOAL_KEYWORDS for t in tokens):
         return "goal"
     head = tokens[0]
     if head in _CONTEXT_KEYWORDS:
         return "context"
-    if head in _PLUMBING_KEYWORDS:
+    if head in _STEP_PLUMBING_KEYWORDS:
         return "plumbing"
     if head in _CLOSING_KEYWORDS or head in (".", ".."):
         return "closing"
@@ -261,6 +293,19 @@ class Step:
     fanin: int = 0            # M5a: distinct facts cited FOR a goal step
     fanin_covered: bool = True  # False if a method shape could not be classified
     live: int = 0             # M5b: named facts simultaneously live AT this step
+    # Where the command starts on its line, and its own text: the line with
+    # everything outside the command blanked, so columns still index the
+    # source.  Several commands may share a line [step-command], so `line`
+    # alone no longer locates a step; `(line, col)` does.
+    col: int = 0
+    src: str = ""
+    # True when the facts this step cites were credited to a goal's fan-in
+    # (a `using` after it, a method closing it, a `from` before it), so M5c
+    # counts the citation once, on the goal.
+    credited: bool = False
+    # A `by` / `done` / `.` / `..` that closes a `subgoal`, not the goal the
+    # script works on, so that goal stays open for the next subgoal's facts.
+    closes_subgoal: bool = False
 
 
 # A goal command optionally carries a label: `have key: "P"`, `show *: "P"`.
@@ -270,7 +315,8 @@ _STEP_LABEL_RE = re.compile(
 
 
 def _extract_statement(lines: list[str], start_idx: int,
-                       end_idx: int) -> tuple[int, int, str]:
+                       end_idx: int, first: str | None = None,
+                       ) -> tuple[int, int, str]:
     r"""Extract a goal step's proposition span starting at 0-indexed line
     ``start_idx`` (inclusive), searching no further than ``end_idx`` (the proof
     body's last line, 0-indexed inclusive).
@@ -281,15 +327,20 @@ def _extract_statement(lines: list[str], start_idx: int,
     cartouche after the command prefix, balanced across lines if it does not
     close on its own line.  A goal with no explicit proposition (``show
     ?thesis`` written bare, ``also``, ``finally``) yields ``(0, 0, "")`` — there
-    is no as-written statement to measure.
+is no as-written statement to measure.
+
+    ``first`` stands in for ``lines[start_idx]``: the command's own text, so
+    a proposition is looked for in the command and not in one that follows
+    it on the same line.
     """
-    first = lines[start_idx]
+    if first is None:
+        first = lines[start_idx]
     _prefix, col = _split_command_prefix(first)
     if col < 0:
         # The command's own line states no proposition.  It may still have one:
         # a statement wrapped to the next line is a bare goal only in the
         # record, not in the source.
-        return _statement_wrapped(lines, start_idx, end_idx)
+        return _statement_wrapped(lines, start_idx, end_idx, first)
     if first[col] == '"':
         return _balance_quote(lines, start_idx, col, end_idx)
     return _balance_cartouche(lines, start_idx, col, end_idx)
@@ -321,7 +372,8 @@ _WRAPPED_HEAD_RE = re.compile(rf"(?P<where>where\b\s*)?(?:{_WRAP_LABEL}\s*)?")
 
 
 def _statement_wrapped(lines: list[str], start_idx: int,
-                       end_idx: int) -> tuple[int, int, str]:
+                       end_idx: int, first: str | None = None,
+                       ) -> tuple[int, int, str]:
     r"""A goal whose proposition is wrapped onto a following line (issues #9,
     #26).
 
@@ -357,7 +409,7 @@ def _statement_wrapped(lines: list[str], start_idx: int,
     expression, not a proposition, so :func:`bare_kind` books it
     ``construction`` whatever this finds.
     """
-    line = lines[start_idx].rstrip()
+    line = (lines[start_idx] if first is None else first).rstrip()
     ob = _WRAPPED_OBTAIN_RE.search(line)
     if ob is None and not _WRAPPED_GOAL_RE.search(line):
         return 0, 0, ""
@@ -478,7 +530,7 @@ def _balance_quote(lines: list[str], start_idx: int, open_col: int,
         close = segment.find('"')
         if close >= 0:
             parts.append(segment[:close])
-            return start_idx + 1, i + 1, "".join(parts).strip()
+            return start_idx + 1, i + 1, "\n".join(parts).strip()
         parts.append(segment)
     # Unbalanced (ran off the proof body): treat the first line only.
     return start_idx + 1, start_idx + 1, parts[0].strip()
@@ -503,7 +555,7 @@ def _balance_cartouche(lines: list[str], start_idx: int, open_col: int,
                 depth -= 1
                 if depth == 0:
                     parts.append(line[seg_start:j])
-                    text = "".join(parts)
+                    text = "\n".join(parts)
                     # strip the leading \<open> of the first segment
                     text = text[len("\\<open>"):] if text.startswith("\\<open>") else text
                     return start_idx + 1, i + 1, text.strip()
@@ -575,44 +627,111 @@ def _inline_proof_col(sec: TheorySection, entry: Entry) -> int:
     return col if not oline[:col].strip() else 0
 
 
-def _scan_steps(sec: TheorySection, entry: Entry) -> list[Step]:
-    r"""Classify the Isar commands in ``entry``'s proof body into a flat list of
-    :class:`Step`, in source order.
+# The commands that finish a goal outright (Pure's `qed` and `qed_script`
+# kinds, short of `qed` itself, which closes a block).
+_TERMINAL_CMDS = frozenset({"by", ".", "..", "sorry", "\\<proof>", "done"})
 
-    Walks live lines from ``proof_line`` to ``body_end_line`` (skipping
-    ``text`` / ``\<comment>`` prose via ``_noise_spans``), tracking proof-block
-    nesting for each step's ``depth``.  Returns ``[]`` only for an entry with no
-    proof at all (a bare definition).  The entry's own outermost ``proof`` is
-    depth-0 scaffolding and is not itself a step.
+
+class Command(NamedTuple):
+    """One Isar proof command: its 1-indexed ``line``, the column it starts at,
+    the column the next command on the line starts at (or the line's end),
+    and its keyword."""
+    line: int
+    col: int
+    end: int
+    kw: str
+
+
+def _line_commands(outer: str) -> list[tuple[int, str]]:
+    """``(col, keyword)`` of each proof command that starts on one line of the
+    OUTER view.  Terms and comments are blank there, so a `show` inside a
+    proposition or a `(* ... *)` cannot split anything; a keyword inside
+    parentheses or brackets is a method's or an attribute's argument, not a
+    command.  Depth restarts on each line: a method wrapped across lines has
+    no command keyword in its tail to mistake."""
+    out: list[tuple[int, str]] = []
+    depth = 0
+    for m in _SEG_TOKEN_RE.finditer(outer):
+        t = m.group(0)
+        if t in _SEG_OPEN:
+            depth += 1
+        elif t in _SEG_CLOSE:
+            depth = max(0, depth - 1)
+        elif depth == 0 and t in _PROOF_COMMANDS:
+            out.append((m.start(), t))
+    return out
+
+
+def scan_commands(sec: TheorySection, entry: Entry) -> list[Command]:
+    r"""Every Isar proof command in ``entry``'s proof body, in source order
+    [step-command].
+
+    Walks the live lines from ``proof_line`` to ``body_end_line`` (skipping
+    ``text`` / ``\<comment>`` prose via ``_noise_spans``) and splits each at
+    the proof commands it holds, found in the outer view (:func:`_line_commands`).
+    Text before a line's first command continues the command before it (a
+    wrapped proposition, a fact list run onto the next line) and is not a
+    command of its own.  A proof written on the statement's own line is read
+    from the column the proof starts at (:func:`_inline_proof_col`)."""
+    if not entry.proof_line:
+        return []
+    src = sec.source()
+    outer = sec.outer_source()
+    col0 = _inline_proof_col(sec, entry)
+    end = min(entry.body_end_line or entry.thy_end or len(src), len(src))
+    noise = _line_set(_noise_spans(sec))
+    out: list[Command] = []
+    for ln in range(entry.proof_line, end + 1):
+        if ln in noise or not src[ln - 1].strip():
+            continue
+        o = outer[ln - 1]
+        if ln == entry.proof_line and col0:
+            o = " " * col0 + o[col0:]
+        found = _line_commands(o)
+        for i, (c, kw) in enumerate(found):
+            nxt = found[i + 1][0] if i + 1 < len(found) else len(src[ln - 1])
+            out.append(Command(ln, c, nxt, kw))
+    return out
+
+
+def _scan_steps(sec: TheorySection, entry: Entry,
+                commands: list[Command] | None = None) -> list[Step]:
+    r"""Classify the Isar commands in ``entry``'s proof body into a flat list of
+    :class:`Step`, in source order — **one step per command**, wherever the
+    line breaks fall [step-command].
+
+    The commands come from :func:`scan_commands`; each is classified on its own
+    text, tracking proof-block nesting for its ``depth``.  Returns ``[]`` only
+    for an entry with no proof at all (a bare definition).  ``proof``, ``next``,
+    ``{`` and ``}`` are structure, not steps: the entry's own outermost
+    ``proof`` is depth-0 scaffolding.  ``sorry``, ``oops``, ``supply`` and
+    the other script commands are not steps either.
+
+    Until #24 this emitted one step per LINE, keyed on the line's leading
+    command sequence, so `have a: "P" using q by simp` was one step and the
+    same three commands on three lines were three.  ``n_steps``, and every
+    per-step mean, measured the layout as well as the proof — in one corpus
+    the difference between two populations' step counts turned out to be
+    where they put `using` and `by`.  A command is Isabelle's own unit, and a
+    line break carries no syntax, so the count now cannot see it.
 
     A proof written on the statement's own line is scanned from the column the
     proof starts at, so ``lemma a: "P" by simp`` yields the same lone ``closing``
     step as the same proof written on the next line.  Reading such a line from
-    column 0 instead gave ``_command_prefix`` the text up to the statement's
-    first quote — ``lemma a: `` — which leads no step family, so the scan
-    returned no steps and the entry dropped out of every ``shape`` verb: 1,525
-    proofs over 120 AFP entries, 79% of all drops, and *trivial* proofs
-    specifically, which biased every aggregate rather than thinning it evenly.
+    column 0 once dropped 1,525 AFP proofs from every ``shape`` verb, trivial
+    ones first.
 
-    The statement half is blanked rather than sliced off to keep this module's
-    line view column-identical to ``source()``, the same contract
-    ``live_source`` / ``outer_source`` hold.  Nothing today can tell the two
-    apart — :func:`_extract_statement` reads the mutated list, so a slice would
-    be self-consistent as well — but every :class:`Step` line number is resolved
-    against the real source by its consumers, and a view that silently shifts
-    columns is the kind of thing that is correct until one caller correlates the
-    two.
+    Each step's ``src`` is its command's text in place on the line, so a
+    proposition, a label or a citation is looked for in the command it
+    belongs to.
     """
     if not entry.proof_line:
         return []
+    if commands is None:
+        commands = scan_commands(sec, entry)
     lines = sec.source()
-    col = _inline_proof_col(sec, entry)
-    if col:
-        lines = list(lines)
-        lines[entry.proof_line - 1] = (
-            " " * col + lines[entry.proof_line - 1][col:])
+    outer = sec.outer_source()
     end = min(entry.body_end_line or entry.thy_end or len(lines), len(lines))
-    noise = _line_set(_noise_spans(sec))
     steps: list[Step] = []
     # `open_blocks` counts open `proof`/`{` frames.  The lemma's own outermost
     # proof is frame 1, so a step *directly* in it reports depth 0 — nesting
@@ -626,46 +745,57 @@ def _scan_steps(sec: TheorySection, entry: Entry) -> list[Step]:
     open_blocks = 0
     block_stack: list[int] = []
     next_block = 0
-    for ln in range(entry.proof_line, end + 1):
-        if ln in noise:
+    # `subgoal` (prf_script_goal) opens a goal that its own terminal method
+    # closes; counted so that method does not close the goal around it.
+    open_subgoals = 0
+    for c in commands:
+        if c.kw == "subgoal":
+            open_subgoals += 1
             continue
-        stripped = lines[ln - 1].strip()
-        if not stripped:
-            continue
+        closes_subgoal = open_subgoals > 0 and c.kw in _TERMINAL_CMDS
+        if closes_subgoal:
+            open_subgoals -= 1
+        raw = lines[c.line - 1]
+        text = " " * c.col + raw[c.col:c.end]
+        stripped = text.strip()
         step_depth = max(0, open_blocks - 1)
         cur_block = block_stack[-1] if block_stack else 0
-        method = _leading_method(stripped)
+        # The method is read from the outer view, where a `by` inside a
+        # quoted term is blank.
+        method = _leading_method(outer[c.line - 1][c.col:c.end])
         # Block close: `qed` is a closing step in the block it closes (recorded
         # before the frame pops); a raw `}` is structural only.
-        if _BLOCK_CLOSE_RE.match(stripped):
-            if stripped.startswith("qed"):
-                steps.append(Step(sec.theory, entry.name, ln, step_depth,
+        if c.kw in ("qed", "}"):
+            if c.kw == "qed":
+                steps.append(Step(sec.theory, entry.name, c.line, step_depth,
                                   "qed", "closing", block=cur_block,
-                                  method=method))
+                                  method=method, col=c.col, src=text))
             open_blocks = max(0, open_blocks - 1)
             if block_stack:
                 block_stack.pop()
             continue
         kind = _classify_step_line(stripped)
-        kw = _leading_kw(stripped)
         if kind == "goal":
-            s_start, s_end, text = _extract_statement(lines, ln - 1, end - 1)
+            s_start, s_end, stmt = _extract_statement(
+                lines, c.line - 1, end - 1, first=text)
             label_m = _STEP_LABEL_RE.search(_command_prefix(stripped))
-            st = Step(sec.theory, entry.name, ln, step_depth, kw, kind,
-                      s_start, s_end, text,
+            st = Step(sec.theory, entry.name, c.line, step_depth, c.kw, kind,
+                      s_start, s_end, stmt,
                       label=label_m.group(1) if label_m else "",
                       goal_cmd=_goal_command(stripped), block=cur_block,
-                      method=method)
-            # Classified here, where the step's own source line is still in
-            # hand: `bare_kind` reads the command prefix, and reconstructing it
-            # later from `Step.line` would be a second parse to keep in step.
+                      method=method, col=c.col, src=text)
+            # Classified here, where the command's own text is still in hand:
+            # `bare_kind` reads the command prefix, and reconstructing it later
+            # from `Step.line` would be a second parse to keep in step.
             st.bare = bare_kind(st, stripped)
             steps.append(st)
         elif kind != "other":
-            steps.append(Step(sec.theory, entry.name, ln, step_depth, kw, kind,
-                              block=cur_block, method=method))
-        # A `proof`/`{` opener deepens *subsequent* lines and opens a new block.
-        if _BLOCK_OPEN_RE.match(stripped):
+            steps.append(Step(sec.theory, entry.name, c.line, step_depth,
+                              c.kw, kind, block=cur_block, method=method,
+                              col=c.col, src=text,
+                              closes_subgoal=closes_subgoal))
+        # A `proof`/`{` opener deepens *subsequent* commands and opens a block.
+        if c.kw in ("proof", "{"):
             open_blocks += 1
             block_stack.append(next_block)
             next_block += 1
@@ -686,7 +816,8 @@ def _goal_command(stripped: str) -> str:
     trailing goal keyword; taking the last one keeps `finally show` a `show`
     (discharge) and `also have` a `have` (introduce)."""
     prefix = _command_prefix(stripped)
-    cmds = [t for t in _CMD_TOKEN_RE.findall(prefix) if t in _GOAL_KEYWORDS]
+    cmds = [t for t in _CMD_TOKEN_RE.findall(prefix)
+            if t in _STEP_GOAL_KEYWORDS]
     return cmds[-1] if cmds else ""
 
 
@@ -737,11 +868,12 @@ def w2_src(step: Step) -> int:
 
 
 def _line_facts(step: Step, lines: list[str]) -> tuple[set[str], bool]:
-    """The facts cited on a step's own source line, via the shared positional
-    extractor.  ``other`` steps (structural lines) cite nothing."""
+    """The facts a step's own command cites, via the shared positional
+    extractor — its ``src``, or its whole line for a step built without one.
+    ``other`` steps (structural lines) cite nothing."""
     if step.kind == "other":
         return set(), True
-    return _cited_facts_on_line(lines[step.line - 1])
+    return _cited_facts_on_line(step.src or lines[step.line - 1])
 
 
 # Plumbing commands that cite BACKWARD — for the goal already stated, not the
@@ -788,8 +920,18 @@ def annotate_fanin(steps: list[Step], sec: TheorySection) -> None:
     ``using`` line had no following goal, which is why the fix is not
     redistribution-neutral.
 
-    A closing step (``qed``, a standalone ``by``) is a boundary: it discards any
-    not-yet-consumed forward chain and ends the backward-citable goal.
+    A closing step's own citations (``by (rule r)``, ``apply (simp add: f)``)
+    serve the goal it closes, so they are credited to it too; then ``by``,
+    ``done``, ``qed`` and ``.`` / ``..`` end it, while ``apply`` leaves it open
+    for the next ``apply``, and the method closing a ``subgoal`` for the next
+    ``subgoal``.  A closing step is also a boundary for the forward
+    chain, discarding whatever no goal consumed.  Until #24 a closing
+    method's facts counted only when it shared the goal's line — `have "P" by
+    (rule r)` cited ``r`` and the same two commands on two lines did not.
+
+    A plumbing or closing step whose facts went to a goal is marked
+    ``credited``, which is how M5c (:func:`consumes`) counts each citation
+    once, on the goal it serves.
     ``step.fanin_covered`` is ``False`` when a method shape on the contributing
     lines could not be classified (folded into the census's method-syntax
     coverage statistic).
@@ -812,27 +954,41 @@ def annotate_fanin(steps: list[Step], sec: TheorySection) -> None:
     lines = sec.source()
     pending: set[str] = set()      # facts from plumbing lines not yet consumed
     pending_covered = True
+    pending_steps: list[Step] = []  # the plumbing steps those facts came from
     open_goal: Step | None = None  # the goal a BACKWARD cite would serve
     seen: set[str] = set()         # what that goal has already been credited
+
+    def credit(s: Step, facts: set[str], covered: bool) -> None:
+        nonlocal seen
+        fresh = facts - seen
+        open_goal.fanin += len(fresh)
+        open_goal.fanin_covered = open_goal.fanin_covered and covered
+        seen |= fresh
+        s.credited = bool(facts)
+
     for s in steps:
         facts, covered = _line_facts(s, lines)
         if s.kind == "plumbing" and s.kw in _BACKWARD_CITE_CMDS:
             if open_goal is not None:
-                fresh = facts - seen
-                open_goal.fanin += len(fresh)
-                open_goal.fanin_covered = open_goal.fanin_covered and covered
-                seen |= fresh
+                credit(s, facts, covered)
         elif s.kind == "plumbing":
             pending |= facts
             pending_covered = pending_covered and covered
+            if facts:
+                pending_steps.append(s)
         elif s.kind == "goal":
             s.fanin = len(facts | pending)
             s.fanin_covered = covered and pending_covered
-            pending, pending_covered = set(), True
+            for p in pending_steps:
+                p.credited = True
             open_goal, seen = s, facts | pending
+            pending, pending_covered, pending_steps = set(), True, []
         elif s.kind == "closing":
-            pending, pending_covered = set(), True
-            open_goal, seen = None, set()
+            if open_goal is not None and facts:
+                credit(s, facts, covered)
+            pending, pending_covered, pending_steps = set(), True, []
+            if s.kw != "apply" and not s.closes_subgoal:
+                open_goal, seen = None, set()
 
 
 # --- M5b: live-fact space (abstract metric A1, reading (i)) -----------------
@@ -897,10 +1053,24 @@ def introduces(step: Step) -> bool:
 
 
 def consumes(step: Step, sec: TheorySection) -> bool:
-    """**M5c denominator** — whether ``step`` cites at least one fact, via the
-    M5a positional extractor on the step's own line.  Implicit ``this``-chaining
-    is *not* counted here — M5c ties consumption to *explicit* citation."""
-    return bool(_line_facts(step, sec.source())[0])
+    """**M5c denominator** — whether ``step`` cites at least one fact.
+
+    A citation counts once, on the goal it serves [step-command]: a goal step
+    consumes when its fan-in (:func:`annotate_fanin`, which must have run) is
+    non-zero, and a plumbing or closing step only when its facts went to no
+    goal — a `using` before an `apply` script, a `note l = a b`.  Read per
+    command instead, `from a have b:` would split into a `from` that consumes
+    and a `have` that introduces, and ``both`` would count nothing.  Implicit
+    ``this``-chaining is *not* counted — M5c ties consumption to *explicit*
+    citation."""
+    return _consumes(step, sec.source())
+
+
+def _consumes(step: Step, lines: list[str]) -> bool:
+    """:func:`consumes`, given the theory's source lines."""
+    if step.kind == "goal":
+        return step.fanin > 0
+    return bool(_line_facts(step, lines)[0]) and not step.credited
 
 
 def _intro_fact_name(step: Step, line: str) -> str:
@@ -940,7 +1110,7 @@ def _fact_intervals(steps: list[Step],
         if (s.kw in _THIS_CHAIN_WORDS or "this" in cited) \
                 and current_this in births:
             deaths[current_this] = i
-        name = _intro_fact_name(s, lines[s.line - 1])
+        name = _intro_fact_name(s, s.src or lines[s.line - 1])
         if name:
             births.setdefault(name, i)
             deaths.setdefault(name, i)
@@ -1000,15 +1170,16 @@ class IntroConsume:
 
 
 def introduce_consume(steps: list[Step], sec: TheorySection) -> IntroConsume:
-    """**M5c** — tally introducing / consuming lines and their three-way split
-    across a proof's steps.  A line can be both (`from a have b:` introduces
-    ``b`` and consumes ``a``); it counts in ``introduce``, ``consume`` and
-    ``both``, but in neither ``introduce_only`` nor ``consume_only``."""
-    lines = sec.source()
+    """**M5c** — tally introducing / consuming steps and their three-way split
+    across a proof's steps.  A goal can be both (`from a have b:` introduces
+    ``b`` and consumes ``a``, on one line or two); it counts in ``introduce``,
+    ``consume`` and ``both``, but in neither ``introduce_only`` nor
+    ``consume_only``.  Consumption is :func:`consumes`, so
+    :func:`annotate_fanin` must have run."""
     out = IntroConsume()
     for s in steps:
         intro = introduces(s)
-        cons = bool(_line_facts(s, lines)[0])
+        cons = consumes(s, sec)
         out.total += 1
         out.introduce += intro
         out.consume += cons
@@ -1653,7 +1824,8 @@ def build_ctx(sec: TheorySection, entry: Entry, steps: list[Step],
     lines = sec.source()
     for s in steps:
         if s.kind == "context" and s.kw in ("fix", "obtain"):
-            context_vars |= _fix_line_names(lines[s.line - 1].strip())
+            context_vars |= _fix_line_names(
+                (s.src or lines[s.line - 1]).strip())
     return ClassifyCtx(entry_names, frozenset(context_vars), corpus_consts)
 
 
@@ -2184,7 +2356,7 @@ def _dist(vals: list[float]) -> tuple[float, float, float]:
     return s[-1], sum(s) / len(s), p90
 
 
-def _region_counts(sec: TheorySection, lo: int, hi: int
+def _region_counts(sec: TheorySection, lo: int, hi: int, first_col: int = 0,
                    ) -> tuple[int, int, int, int]:
     r"""Line and token counts over the inclusive 1-based span ``[lo, hi]``, split
     **raw** vs **code** (raw minus prose).
@@ -2196,7 +2368,12 @@ def _region_counts(sec: TheorySection, lo: int, hi: int
     ``(lines, lines_code, tokens, tokens_code)``; all zero for an empty or absent
     span (e.g. the proof span of a bare definition, whose ``proof_line`` is 0).
     ``prose = raw - code`` for both, so no prose column is stored.  The prose
-    line-set is memoised on the section — every proof in a theory shares it."""
+    line-set is memoised on the section — every proof in a theory shares it.
+
+    ``first_col`` starts the token count on line ``lo`` at that column: a
+    proof sharing its statement's line (``lemma a: "P" by simp``) owns only
+    the ``by simp``.  Counted from column 0, the statement's tokens were
+    proof tokens on one line and not on two [step-command]."""
     lines = sec.source()
     hi = min(hi, len(lines))
     if lo < 1 or hi < lo:
@@ -2207,7 +2384,8 @@ def _region_counts(sec: TheorySection, lo: int, hi: int
         sec._prose_line_set = prose
     n = nc = t = tc = 0
     for ln in range(lo, hi + 1):
-        ntok = len(_stmt_tokens(lines[ln - 1]))
+        text = lines[ln - 1][first_col:] if ln == lo else lines[ln - 1]
+        ntok = len(_stmt_tokens(text))
         n += 1
         t += ntok
         if ln not in prose:
@@ -2349,7 +2527,8 @@ def summarize(pm: ProofMetrics) -> ProofSummary:
     ind = summarize_inductions(pm.inductions)
     e = pm.entry
     p_lines, p_lines_code, p_tokens, p_tokens_code = (
-        _region_counts(pm.sec, e.proof_line, e.body_end_line)
+        _region_counts(pm.sec, e.proof_line, e.body_end_line,
+                       _inline_proof_col(pm.sec, e))
         if e.proof_line else (0, 0, 0, 0))
     return ProofSummary(
         pm.theory, pm.lemma, len(pm.steps), len(goals), len(goals) - len(stated),
@@ -2383,11 +2562,11 @@ def step_record(step: Step, ctx: ClassifyCtx, lines: list[str],
     absent, so the schema is config-gated and self-describing.
     """
     w1 = w1_est(step, ctx)
-    cited, _covered = _line_facts(step, lines)
     rec = {
         "theory": step.theory,
         "lemma": step.lemma,
         "line": step.line,
+        "col": step.col,
         "block": step.block,
         "depth": step.depth,
         "kind": step.kind,
@@ -2407,7 +2586,7 @@ def step_record(step: Step, ctx: ClassifyCtx, lines: list[str],
         "fanin_covered": step.fanin_covered,
         "live": step.live,
         "introduces": introduces(step),
-        "consumes": bool(cited),
+        "consumes": _consumes(step, lines),
     }
     if cfg is not None:
         fr = frame_ratio(step, cfg)

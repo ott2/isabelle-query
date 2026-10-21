@@ -96,7 +96,8 @@ class InlineProofIsScanned(unittest.TestCase):
         sec = _sec('lemma d: "P d" using refl by simp\n'
                    'lemma e: "P e"\n'
                    '  using refl by simp')
-        self.assertEqual(_shape(_steps(sec, "d")), [("using", "plumbing")])
+        self.assertEqual(_shape(_steps(sec, "d")),
+                         [("using", "plumbing"), ("by", "closing")])
         self.assertEqual(_shape(_steps(sec, "d")), _shape(_steps(sec, "e")))
 
 
@@ -118,7 +119,9 @@ class OnlyStatementTextIsBlanked(unittest.TestCase):
                    'qed')
         self.assertEqual(shape._inline_proof_col(sec, _entry(sec, "i")), 0)
         self.assertEqual(_shape(_steps(sec, "i")),
-                         [("from", "goal"), ("show", "goal"), ("qed", "closing")])
+                         [("from", "plumbing"), ("have", "goal"),
+                          ("by", "closing"), ("show", "goal"),
+                          ("by", "closing"), ("qed", "closing")])
 
     def test_an_ordinary_indented_proof_line_needs_no_column(self):
         """0 for the ordinary case is also what keeps the scan from copying the
@@ -152,7 +155,11 @@ class StatementSpansAndLineNumbers(unittest.TestCase):
         # `show` is `Q e`.
         sec = _sec('lemma e: "P e" proof - show "Q e" by simp qed')
         steps = _steps(sec, "e")
-        self.assertEqual([s.stmt_text for s in steps], ["Q e"])
+        self.assertEqual([s.stmt_text for s in steps if s.kind == "goal"],
+                         ["Q e"])
+        # And the `proof` in mid-line opens a block, which the `qed` closes.
+        self.assertEqual([(s.kw, s.depth) for s in steps],
+                         [("show", 0), ("by", 0), ("qed", 0)])
 
     def test_step_lines_are_real_source_lines(self):
         sec = _sec('lemma a: "P a" by simp')

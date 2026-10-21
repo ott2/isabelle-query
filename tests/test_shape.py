@@ -2,8 +2,10 @@
 
 The shape metrics attach to individual Isar *steps*, which the base parser
 does not model.  `shape._scan_steps` adds that: it walks a proof body and
-classifies each live command line (goal / context / plumbing / closing) with
-its proof-block nesting depth, extracting the proposition span for goal steps.
+classifies each Isar command (goal / context / plumbing / closing) with its
+proof-block nesting depth, extracting the proposition span for goal steps.
+A step is a command, not a line [step-command]: `from a have p1: "P" by
+blast` is three steps, as it would be on three lines.
 
 The fixture (`Shape.thy`) is hand-computed: a flat `by` proof, a `chained`
 proof exercising the plumbing-prefixed goal forms (`from a have`, `moreover
@@ -146,7 +148,7 @@ class FlatProof(unittest.TestCase):
         sec = section_from(thy, "T")
         foo = _entry(sec, "foo")
         self.assertEqual([(s.kind, s.kw) for s in shape._scan_steps(sec, foo)],
-                         [("plumbing", "unfolding")])
+                         [("plumbing", "unfolding"), ("closing", "by")])
         self.assertIsNotNone(shape.analyze_proof(sec, foo))
 
     def test_standalone_unfolding_line_is_its_own_step(self):
@@ -170,12 +172,26 @@ class FlatProof(unittest.TestCase):
 
 class ChainedProof(unittest.TestCase):
     def test_step_shape(self):
+        # Each line is split at its commands; the chain words lead plumbing
+        # steps of their own, as they would on lines of their own.
         self.assertEqual(_shape(_steps("chained")), [
-            (12, 0, "from", "goal"),
-            (13, 0, "moreover", "goal"),
-            (14, 0, "ultimately", "goal"),
+            (12, 0, "from", "plumbing"),
+            (12, 0, "have", "goal"),
+            (12, 0, "by", "closing"),
+            (13, 0, "moreover", "plumbing"),
+            (13, 0, "have", "goal"),
+            (13, 0, "using", "plumbing"),
+            (13, 0, "by", "closing"),
+            (14, 0, "ultimately", "plumbing"),
+            (14, 0, "show", "goal"),
+            (14, 0, "by", "closing"),
             (15, 0, "qed", "closing"),
         ])
+
+    def test_steps_sharing_a_line_have_their_own_columns(self):
+        self.assertEqual(
+            [(s.line, s.col) for s in _steps("chained") if s.line == 13],
+            [(13, 2), (13, 11), (13, 20), (13, 28)])
 
     def test_goal_statements_and_labels(self):
         goals = [s for s in _steps("chained") if s.kind == "goal"]
@@ -194,8 +210,10 @@ class NestedProof(unittest.TestCase):
             (22, 1, "fix", "context"),
             (23, 1, "assume", "context"),
             (24, 1, "show", "goal"),
+            (24, 1, "by", "closing"),
             (25, 1, "qed", "closing"),
             (26, 0, "show", "goal"),
+            (26, 0, "by", "closing"),
             (27, 0, "qed", "closing"),
         ])
 
@@ -339,7 +357,28 @@ class CitationDirection(unittest.TestCase):
         steps = shape._scan_steps(sec, entry)
         shape.annotate_fanin(steps, sec)
         self.assertEqual([(s.line, s.kind, s.fanin) for s in steps],
-                         [(4, "plumbing", 0)])
+                         [(4, "plumbing", 0), (4, "closing", 0)])
+        # Credited to no goal, so M5c counts it on the `using` itself.
+        self.assertFalse(steps[0].credited)
+        self.assertTrue(shape.consumes(steps[0], sec))
+
+    def test_a_closing_method_credits_the_goal_it_closes(self):
+        # `by (rule a1)` cites `a1` for `have p`, whether or not it shares the
+        # goal's line.  Before #24 the second layout lost it: the closing step
+        # was a boundary, and its own citations went nowhere.
+        for body in ('  have p: "True" by (rule a1)\n',
+                     '  have p: "True"\n    by (rule a1)\n'):
+            with self.subTest(body=body):
+                thy = ('theory T imports Main begin\n'
+                       'lemma a1: "True" by simp\n'
+                       'lemma r: "True"\nproof -\n' + body +
+                       '  show "True" by simp\nqed\nend\n')
+                sec = section_from(thy, "T")
+                entry = next(e for e in sec.entries if e.name == "r")
+                steps = shape._scan_steps(sec, entry)
+                shape.annotate_fanin(steps, sec)
+                self.assertEqual([s.fanin for s in steps
+                                  if s.kind == "goal"], [1, 0])
 
 
 def _live(name):
@@ -349,45 +388,56 @@ def _live(name):
 
 
 def _ic(name):
+    """M5c, which reads fan-in, so the steps are annotated first."""
     sec = _sec()
     steps = shape._scan_steps(sec, _entry(sec, name))
+    shape.annotate_fanin(steps, sec)
     return shape.introduce_consume(steps, sec)
 
 
 class Introduces(unittest.TestCase):
     """M5c introduce flag keys on the goal command, not the leading keyword."""
 
-    def _by_line(self, name):
-        return {s.line: (shape.introduces(s), s.goal_cmd) for s in _steps(name)}
+    def _by_command(self, name):
+        return {(s.line, s.kw): (shape.introduces(s), s.goal_cmd)
+                for s in _steps(name)}
 
     def test_from_have_introduces_via_goal_cmd(self):
-        # `from a have p1:` leads with plumbing (kw="from") but binds `p1`.
-        flags = self._by_line("chained")
-        self.assertEqual(flags[12], (True, "have"))
+        # `from a have p1:` is a `from` that chains and a `have` that binds.
+        flags = self._by_command("chained")
+        self.assertEqual(flags[12, "from"], (False, ""))
+        self.assertEqual(flags[12, "have"], (True, "have"))
         # `ultimately show` discharges — goal_cmd="show", not an introducer.
-        self.assertEqual(flags[14], (False, "show"))
+        self.assertEqual(flags[14, "show"], (False, "show"))
 
     def test_context_and_closing(self):
-        flags = self._by_line("nested")
-        self.assertEqual(flags[20][0], True)    # have outer:
-        self.assertEqual(flags[22][0], False)   # fix y — a variable, not a fact
-        self.assertEqual(flags[23][0], True)    # assume "y = y"
-        self.assertEqual(flags[26], (False, "show"))
-        self.assertEqual(flags[27][0], False)   # qed
+        flags = self._by_command("nested")
+        self.assertEqual(flags[20, "have"][0], True)     # have outer:
+        self.assertEqual(flags[22, "fix"][0], False)     # a variable, not a fact
+        self.assertEqual(flags[23, "assume"][0], True)   # assume "y = y"
+        self.assertEqual(flags[26, "show"], (False, "show"))
+        self.assertEqual(flags[27, "qed"][0], False)
 
 
 class LiveFactSpace(unittest.TestCase):
     """M5b: peak and mean simultaneously-live named facts."""
 
     def test_reuse_holds_three_at_the_peak(self):
-        # f1[L42..show], f2[L43..f3], f3[L44..show] — all three coexist at L44
-        # (`have f3: ... using f1 f2`).  live per step: 1,2,3,2,0 -> max 3.
-        self.assertEqual(_live("reuse"), (3, 1.6))
+        # 13 commands: have/using/by on each of L42-45, then qed.  f1 lives
+        # from its `have` (0) to the `using f3 f1` (10), f2 from 3 to the
+        # `using f1 f2` (7), f3 from 6 to 10.  Live per command:
+        # 1,1,1, 2,2,2, 3,3,2, 2,2,0, 0 -> max 3, mean 21/13.
+        live_max, live_mean = _live("reuse")
+        self.assertEqual(live_max, 3)
+        self.assertAlmostEqual(live_mean, 21 / 13)
 
     def test_standalone_then_chaining_extends_life(self):
-        # `step` is introduced at L34 and consumed by the implicit `this` of
-        # `then show` at L35, so it lives across two of the four steps.
-        self.assertEqual(_live("standalone"), (1, 0.5))
+        # from h | have step | by | then | show | by | qed.  `step` is born at
+        # its `have` (1) and consumed by the implicit `this` of `then` (3), so
+        # it lives across three of the seven commands.
+        live_max, live_mean = _live("standalone")
+        self.assertEqual(live_max, 1)
+        self.assertAlmostEqual(live_mean, 3 / 7)
 
     def test_nested_single_fact_peak(self):
         # Only `outer` is a named in-proof fact -> peak 1.  (Mean is left
@@ -400,24 +450,31 @@ class LiveFactSpace(unittest.TestCase):
 
 
 class IntroduceConsume(unittest.TestCase):
-    """M5c: introducing / consuming line tallies and their three-way split."""
+    """M5c: introducing / consuming step tallies and their three-way split.
+
+    A citation counts once, on the goal it serves [step-command]: `from a`,
+    a `using` and a closing method's facts go to the goal, so they are not
+    also counted on their own commands."""
 
     def test_chained(self):
         ic = _ic("chained")
-        # L12 both, L13 both, L14 consume-only (rule conjI), L15 qed neither.
+        # have p1 (from a) both; moreover introduce-only (the calculation);
+        # have "P" (using a) both; show (rule conjI) consume-only; the
+        # other 7 commands neither.
         self.assertEqual(
-            (ic.introduce, ic.consume, ic.both), (2, 3, 2))
+            (ic.introduce, ic.consume, ic.both), (3, 3, 2))
         self.assertEqual(
-            (ic.introduce_only, ic.consume_only, ic.neither), (0, 1, 1))
-        self.assertEqual(ic.ratio, 2 / 3)
+            (ic.introduce_only, ic.consume_only, ic.neither), (1, 1, 7))
+        self.assertEqual(ic.ratio, 1.0)
 
     def test_standalone(self):
         ic = _ic("standalone")
-        # L33 `from h` consume-only, L34 `have step:` introduce-only,
-        # L35 `then show` neither (implicit this is not explicit citation),
-        # L36 qed neither.
+        # `from h` on L33 serves `have step:` on L34, so the `have` is both,
+        # exactly as `from h have step:` on one line would be — before #24
+        # the line split them into a consume-only and an introduce-only.
+        # `then show` cites nothing explicitly (implicit `this` is M5b's).
         self.assertEqual(
-            (ic.introduce_only, ic.consume_only, ic.both), (1, 1, 0))
+            (ic.introduce_only, ic.consume_only, ic.both), (0, 0, 1))
         self.assertEqual(ic.ratio, 1.0)
 
     def test_nested(self):
@@ -428,9 +485,11 @@ class IntroduceConsume(unittest.TestCase):
 
     def test_reuse(self):
         ic = _ic("reuse")
-        # three `have ... using` (both) + one `show ... using` (consume-only).
+        # three `have ... using` (both) + one `show ... using` (consume-only);
+        # the `using`s are credited to their goals, the `by`s and qed cite
+        # nothing: 9 of 13 commands neither.
         self.assertEqual((ic.introduce, ic.consume, ic.both), (3, 4, 3))
-        self.assertEqual((ic.consume_only, ic.neither), (1, 1))
+        self.assertEqual((ic.consume_only, ic.neither), (1, 9))
         self.assertEqual(ic.ratio, 0.75)
 
     def test_flat_proof_ratio_is_undefined(self):
@@ -628,13 +687,13 @@ class Blocks(unittest.TestCase):
 
     def test_flat_and_chained_are_one_block(self):
         self.assertEqual([s.block for s in _steps("flat_proof")], [0])
-        self.assertEqual([s.block for s in _steps("chained")], [0, 0, 0, 0])
+        self.assertEqual([s.block for s in _steps("chained")], [0] * 11)
 
     def test_nested_second_proof_is_a_new_block(self):
-        # have(0) | fix,assume,show,qed(1) | show,qed(0) — the inner proof is
-        # block 1, and control returns to block 0 after its qed.
+        # have(0) | fix,assume,show,by,qed(1) | show,by,qed(0) — the inner
+        # proof is block 1, and control returns to block 0 after its qed.
         self.assertEqual([s.block for s in _steps("nested")],
-                         [0, 1, 1, 1, 1, 0, 0])
+                         [0, 1, 1, 1, 1, 1, 0, 0, 0])
 
 
 class BracketChunks(unittest.TestCase):
@@ -832,8 +891,8 @@ class AnalyzeProof(unittest.TestCase):
 
     def test_redundant_rollup_is_hand_computed(self):
         ps = shape.summarize(_pm("redundant"))
-        # steps: have s1 | have s2 | show | qed  (3 goals, 0 bare).
-        self.assertEqual((ps.n_steps, ps.n_goals, ps.n_bare), (4, 3, 0))
+        # have s1, by | have s2, by | show, using, by | qed  (3 goals, 0 bare).
+        self.assertEqual((ps.n_steps, ps.n_goals, ps.n_bare), (8, 3, 0))
         # flat proof (every step in the lemma's own `proof`) -> depth 1.
         self.assertEqual(ps.depth_max, 1)
         # each goal is `(a, b) = (a, b)` = 11 tokens.
@@ -845,13 +904,14 @@ class AnalyzeProof(unittest.TestCase):
         self.assertAlmostEqual(ps.fanin_mean, 2 / 3)
         # one of three goals cites -> fanin_cited 1 (conditional fan-in = 2/1).
         self.assertEqual(ps.fanin_cited, 1)
-        # s1[L60..show], s2[L61..show] coexist at the show -> live peak 2.
+        # s1 from its have (0) to `using s1 s2` (5), s2 from 2 to 5: live per
+        # command 1,1,2,2,2,2,0,0 -> peak 2, mean 10/8.
         self.assertEqual(ps.live_max, 2)
         self.assertAlmostEqual(ps.live_mean, 1.25)
         # the one block's M4 ratio (33 tokens / 8 compressed).
         self.assertAlmostEqual(ps.dag_max, 33 / 8)
-        # introduce s1, s2 (show discharges); consume the one `using` line;
-        # no line both introduces and cites -> both 0.
+        # introduce s1, s2 (show discharges); the show consumes s1 s2; no goal
+        # both introduces and cites -> both 0.
         self.assertEqual((ps.intro, ps.consume, ps.both, ps.ratio), (2, 1, 0, 2.0))
         # all three discharges are `by simp` -> trivial_frac 1.0.
         self.assertEqual(ps.trivial_frac, 1.0)
@@ -1003,12 +1063,18 @@ class StepRecord(unittest.TestCase):
 
     def test_goal_record_fields(self):
         # redundant's `show ... using s1 s2` at L62.
-        rec = next(r for r in self._records("redundant") if r["line"] == 62)
+        recs = [r for r in self._records("redundant") if r["line"] == 62]
+        self.assertEqual([(r["col"], r["kw"]) for r in recs],
+                         [(2, "show"), (25, "using"), (37, "by")])
+        rec = recs[0]
         self.assertEqual(rec["theory"], "Shape")
         self.assertEqual(rec["lemma"], "redundant")
         self.assertEqual((rec["kind"], rec["kw"], rec["goal_cmd"]),
                          ("goal", "show", "show"))
-        self.assertEqual(rec["method"], "simp")   # `... using s1 s2 by simp`
+        # The method is the `by` command's, not the goal's.
+        self.assertEqual((rec["method"], recs[2]["method"]), ("", "simp"))
+        # The `using` cites for the show, so it is not a consumer itself.
+        self.assertFalse(recs[1]["consumes"])
         self.assertEqual(rec["block"], 0)
         self.assertEqual(rec["w2_src"], 11)
         self.assertEqual(rec["w1_est"], 2)

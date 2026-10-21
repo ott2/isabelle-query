@@ -59,7 +59,7 @@ Flags, beyond the global `-R/--root` and `--version`:
 | M4 | `dag_ratio_est` | cross-step redundancy (repeated bracketed subterms / block) | estimator |
 | M5a | `fanin` | distinct facts cited for a step | exact |
 | M5b | `live` | named facts simultaneously live at a step | exact |
-| M5c | `introduce`/`consume` | fact-introducing vs fact-citing lines | exact |
+| M5c | `introduce`/`consume` | fact-introducing vs fact-citing steps, a citation counted on the goal it serves | exact |
 | M6 | extension curve | width remaining after naming the *k* most-repeated subterms | estimator |
 
 ¹ M3 is defined purely syntactically, so it has no estimator/reference split —
@@ -80,11 +80,17 @@ The columns group into axes, which is how the `summary` table is laid out:
 They are separate measurements, not components of a single score: a proof can be
 long and shallow, or short and wide.
 
+A **step is an Isar command**: `have a: "P" using q by simp` is three steps,
+whether on one line or three. Only `proof_lines` and `entry_lines` see the
+layout; every other column is the same however the proof is broken into lines.
+`proof`, `next`, `{` and `}` are structure, not steps, and `also` / `finally`
+are plumbing (Isabelle's `prf_decl` / `prf_chain`), not goals.
+
 ## JSONL records
 
 `--json` (and `census`) emit one JSON object per line, keyed by a stable
-`(theory, lemma, line)` position so records join across runs without
-re-instrumentation. Two record shapes — per-step (`steps` / `lemma` / `widest`)
+`(theory, lemma)` position, plus `(line, col)` for a step, so records join
+across runs without re-instrumentation. Two record shapes — per-step (`steps` / `lemma` / `widest`)
 and per-proof aggregate (`summary --json` / `census`). **The full field lists are
 in the `shape_cmds` module docstring.**
 
