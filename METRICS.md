@@ -74,11 +74,18 @@ The columns group into axes, which is how the `summary` table is laid out:
 | Width | how big is one step? | `w1_est`, `const_est`/`const_canon_est`, `w2_src` |
 | Space | how many facts held at once? | `fanin`, `live`, `introduce`/`consume` |
 | Redundancy | how much is re-said? | `dag_ratio_est`, M6 extension curve |
-| Automation | how is it discharged? | `trivial_frac`, `method_kinds`, induction discipline (`n_induct`, `induct_arbitrary_max`, `induct_recursion`) |
+| Automation | how is it discharged? | `trivial_frac`, `method_kinds`, `methods`, induction discipline (`n_induct`, `induct_arbitrary_max`, `induct_recursion`) |
 | Framing | how much to say to change a little? | `frame_ratio` |
 
 They are separate measurements, not components of a single score: a proof can be
 long and shallow, or short and wide.
+
+`methods` counts how each method is applied, as `position:name/modifier`:
+`by:simp/only` is not `by:simp`, and `apply:rule` is not `by:rule`. The
+position is `by`, `apply`, `proof` or `qed` (`.` and `..` are forms of their
+own); the name is the leading method, as `method_kinds` reads it; the
+modifier is the first `word:` inside it, the keyword and never its argument.
+`method_kinds` is the `by:` / `apply:` forms bucketed by name.
 
 A **step is an Isar command**: `have a: "P" using q by simp` is three steps,
 whether on one line or three. Only `proof_lines` and `entry_lines` see the

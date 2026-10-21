@@ -1328,6 +1328,86 @@ def method_kind_counts(steps: list[Step]) -> dict[str, int]:
     return counts
 
 
+# --- method forms: how each method is applied (#25) [method-forms] ----------
+#
+# `method_kinds` buckets a step by its leading method's name alone, which is
+# the right grain for an automation profile but loses two things that
+# separate ways of writing proofs.  `by (simp only: f)` is a fixed rewrite,
+# the opposite of reaching for the simpset, yet it lands with `auto`; and
+# `apply (rule r)` in a script and `by (rule r)` closing one goal are both
+# `structural`.  A method FORM keeps both, as `position:name/modifier`:
+#
+#   position   the command applying it: `by`, `apply`, `proof` (a structured
+#              proof's initial method), `qed` (its terminal one); `.` and
+#              `..` are forms of their own, and `proof -` is `proof:-`
+#   name       the leading method, read exactly as `Step.method` reads it
+#              (`graph._leading_method`), so `method_kinds` is the forms at
+#              `by` / `apply` bucketed by name
+#   modifier   the first `word:` inside that leading method (`only`, `add`,
+#              `del`, `split`, `cong`, `arbitrary`, `rule`, ...): the
+#              keyword, not its arguments, so a form names no lemma
+#
+# Under a combinator (`apply (rule r, simp)`) only the leading method is
+# recorded, as `method_kinds` does.  Counted per command, not per line
+# [step-command], so the histogram cannot see the layout either.
+METHOD_POSITIONS = frozenset({"by", "apply", "proof", "qed"})
+_FORM_NAME_RE = re.compile(r"\s*(?:-|\(?\s*([\w']+))")
+_FORM_MODIFIER_RE = re.compile(r"([A-Za-z_][\w']*[!?]?)\s*:(?!:)")
+
+
+def _leading_atom(text: str) -> str:
+    """The leading method of a method expression: everything up to the first
+    combinator (`,` `;` `|`) or closing parenthesis at the depth it opens at,
+    or the first blank for an unparenthesised name."""
+    t = text.lstrip()
+    if not t.startswith("("):
+        return t.split(None, 1)[0] if t else ""
+    depth = 0
+    for i, ch in enumerate(t):
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+            if depth == 0:
+                return t[1:i]
+        elif depth == 1 and ch in ",;|":
+            return t[1:i]
+    return t[1:]
+
+
+def method_form(kw: str, outer_text: str) -> str:
+    """The form of one command's method — see the block comment above — or
+    ``""`` when the command applies none (`qed` alone, `done`, a `have`).
+    ``outer_text`` is the command's text in the OUTER view, so a `:` or a
+    method word inside a quoted argument is blank."""
+    if kw in (".", ".."):
+        return kw
+    if kw not in METHOD_POSITIONS:
+        return ""
+    rest = outer_text.lstrip()[len(kw):]
+    m = _FORM_NAME_RE.match(rest)
+    if m is None or not rest.strip():
+        return "proof" if kw == "proof" else ""
+    if m.group(1) is None:
+        return "proof:-" if kw == "proof" else ""
+    mod = _FORM_MODIFIER_RE.search(_leading_atom(rest))
+    return f"{kw}:{m.group(1)}" + (f"/{mod.group(1)}" if mod else "")
+
+
+def method_form_counts(sec: TheorySection,
+                       commands: list[Command]) -> dict[str, int]:
+    """Histogram of a proof's method forms (:func:`method_form`), keys sorted
+    so a record is stable.  Over every command, `proof` and `qed` included,
+    which are not steps."""
+    outer = sec.outer_source()
+    counts: Counter[str] = Counter()
+    for c in commands:
+        form = method_form(c.kw, outer[c.line - 1][c.col:c.end])
+        if form:
+            counts[form] += 1
+    return dict(sorted(counts.items()))
+
+
 # --- ADD #3: induction discipline (LiFtEr's source-visible inputs) ----------
 #
 # LiFtEr (Nagashima, APLAS 2019) encodes induction heuristics; its *input* is the
@@ -2298,6 +2378,8 @@ class ProofMetrics:
     intro_consume: IntroConsume
     redundancy: list[BlockRedundancy]
     inductions: list[Induction]
+    # The method-form histogram (#25), over every command of the proof.
+    methods: dict[str, int] = field(default_factory=dict)
 
     @property
     def theory(self) -> str:
@@ -2335,7 +2417,8 @@ def analyze_proof(sec: TheorySection, entry: Entry,
     :func:`classify_identifier` is position-blind and genuinely needs one — so
     :func:`graph.configure_namespace` and friends have not stopped being useful;
     they simply no longer decide what a proof's automation looks like."""
-    steps = _scan_steps(sec, entry)
+    commands = scan_commands(sec, entry)
+    steps = _scan_steps(sec, entry, commands)
     if not steps:
         return None
     annotate_fanin(steps, sec)
@@ -2345,7 +2428,7 @@ def analyze_proof(sec: TheorySection, entry: Entry,
     red = cross_step_redundancy(steps)
     inductions = scan_inductions(sec, entry)
     return ProofMetrics(sec, entry, steps, ctx, live_max, live_mean, ic, red,
-                        inductions)
+                        inductions, method_form_counts(sec, commands))
 
 
 def analyze_sections(sections: list[TheorySection],
@@ -2517,6 +2600,10 @@ class ProofSummary:
     # theory (`Examples` 19 times, `Preliminaries` 15, `Misc` 8), so
     # `(theory, lemma)` alone cannot say which entry a record came from.
     session: str | None = None
+    # How each method is applied, `position:name/modifier` (#25): a finer
+    # grain than `method_kinds`, which is its `by` / `apply` forms bucketed
+    # by name.  Defaulted, like `session`, so positional construction holds.
+    methods: dict[str, int] = field(default_factory=dict)
 
 
 def summarize(pm: ProofMetrics) -> ProofSummary:
@@ -2557,7 +2644,7 @@ def summarize(pm: ProofMetrics) -> ProofSummary:
         method_kind_counts(pm.steps), bare_kind_counts(pm.steps),
         ind.n, ind.terms_max, ind.arbitrary_max, ind.n_rule, ind.n_recursion,
         p_lines, p_lines_code, p_tokens, p_tokens_code, e.line_count,
-        session=pm.sec.session)
+        session=pm.sec.session, methods=pm.methods)
 
 
 def step_record(step: Step, ctx: ClassifyCtx, lines: list[str],
@@ -2662,6 +2749,9 @@ def summary_record(ps: ProofSummary) -> dict:
         # reduction — the one structured field, kept grouped rather than spread
         # across five columns).
         "method_kinds": ps.method_kinds,
+        # How each method is applied: `position:name/modifier` -> count (#25).
+        # `method_kinds` is the `by:` / `apply:` forms bucketed by name.
+        "methods": ps.methods,
         # Why the `n_bare` steps are bare; the three keys sum to `n_bare`.
         "bare_kinds": ps.bare_kinds,
         # ADD #3 induction discipline (LiFtEr source inputs): induction

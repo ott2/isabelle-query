@@ -87,10 +87,14 @@ split is ``introduce - both`` / ``consume - both`` / ``both``),
 ≤8 repeated chunks per block), ``method_kinds`` (the *automation axis*
 profile: a histogram of discharged steps by method kind — ``automation`` /
 ``search`` / ``arith`` / ``structural`` / ``other`` — a finer grain than
-``trivial_frac`` over the same discharged-step denominator), and ``bare_kinds``
+``trivial_frac`` over the same discharged-step denominator), ``methods`` (how
+each method is applied, ``position:name/modifier`` -> count: ``by:simp/only``,
+``apply:rule``, ``proof:induct/arbitrary``, ``qed:simp``, ``proof:-``,
+``.``, ``..`` — over every command, and ``method_kinds`` is its ``by:`` /
+``apply:`` forms bucketed by name), and ``bare_kinds``
 (why each of the ``n_bare`` steps states no proposition — ``construction`` /
 ``undelimited`` / ``unfound``, summing to ``n_bare``, which is unchanged).
-Those two are the nested fields.
+Those three are the nested fields.
 This record is designed to be a *sufficient statistic* per proof — the analysis
 layer reads these scalars, never re-scans.
 """

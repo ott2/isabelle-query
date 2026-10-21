@@ -129,7 +129,7 @@ _SUMMARY_KEYS = {
     "fanin_mean", "fanin_cited", "live_max", "live_mean", "dag_ratio_est_max",
     "introduce",
     "consume", "both", "ratio", "trivial_frac", "removable_w2_est_at_8",
-    "method_kinds",
+    "method_kinds", "methods",
     # Why each of the `n_bare` steps is bare; the three keys sum to `n_bare`,
     # which is unchanged — a refinement, not a redefinition [bare-provenance].
     "bare_kinds",
