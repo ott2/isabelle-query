@@ -18,6 +18,7 @@ The third bucket is the one measuring found rather than confirmed: the
 proposition IS on the line, written without quotes or a cartouche, which Isar
 allows for a single term.  Nobody had counted those.
 
+After #26 read a wrapped `obtain`, `unfound` is 498 (0.26%) of 188,289.
 `unfound` is the residue and the point of the split — the only bucket whose
 growth is evidence about the SCANNER rather than about writing style.
 
@@ -36,7 +37,7 @@ from support import section_from  # noqa: E402
 from isabelle_query import shape  # noqa: E402
 
 # Every step below is a real AFP spelling, cited by the probe run above.
-# Line numbers are load-bearing in the assertions; the theory is 31 lines.
+# Line numbers are load-bearing in the assertions; the theory is 40 lines.
 BARE = r'''theory Bare
 imports Main
 begin
@@ -64,6 +65,15 @@ proof -
     "x = (0::nat)" by simp
   have
     "True" by simp
+  thus ?thesis by simp
+qed
+
+lemma residue: "True"
+proof -
+  consider
+    (a) "True" | (b) "\<not> True" by blast
+  have False by(rule FalseE)
+  show thesis.
   thus ?thesis by simp
 qed
 
@@ -126,16 +136,39 @@ class Unfound(unittest.TestCase):
     def setUp(self):
         self.pm, self.by_line = kinds("unfound")
 
-    def test_obtain_with_the_statement_below_is_unfound(self):
-        # `obtain x where` on its own line: `_statement_wrapped` declines it
-        # because the remainder is not a label.  A residue left rather than
-        # guessed at — and now a countable one.
-        self.assertEqual(self.by_line[24], "unfound")
+    def test_obtain_with_the_statement_below_is_read(self):
+        # `obtain x where` on its own line.  It was this bucket's largest
+        # population (#26): 9,640 of the AFP's 12,026 `unfound`.  Read now,
+        # so it is no longer bare at all.
+        self.assertEqual(self.by_line[24], "")
 
     def test_a_wrapped_have_is_not_bare_at_all(self):
         # The half of issue #9(b) that IS fixed: `have` alone on its line with
         # a delimited statement below is read, so it never reaches `n_bare`.
         self.assertEqual(self.by_line[26], "")
+
+
+class Residue(unittest.TestCase):
+    """What `unfound` still holds after #26, and two spellings it no longer
+    takes in by mistake."""
+
+    def setUp(self):
+        self.pm, self.by_line = kinds("residue")
+
+    def test_case_named_consider_is_still_unfound(self):
+        # `consider` / `(a) "P" | (b) "Q"`: the case names stand before the
+        # delimiter, which `_statement_wrapped` does not read.  ~200 AFP rows.
+        self.assertEqual(self.by_line[33], "unfound")
+
+    def test_a_method_glued_to_its_by_is_undelimited(self):
+        # `have False by(rule r)` — SDG, WellFormProgs.  No space before the
+        # parenthesis, so splitting the rest at a blank put `by(rule` after
+        # the term, which is not a proof word, and the step booked `unfound`.
+        self.assertEqual(self.by_line[35], "undelimited")
+
+    def test_a_dot_proof_glued_to_its_term_is_undelimited(self):
+        # `show thesis.` — Binary_Code_Imprimitive:144.
+        self.assertEqual(self.by_line[36], "undelimited")
 
 
 class TheSumIsStillNBare(unittest.TestCase):

@@ -295,18 +295,35 @@ def _extract_statement(lines: list[str], start_idx: int,
     return _balance_cartouche(lines, start_idx, col, end_idx)
 
 
+# A statement label, `key:`, `key [simp]:` or `[simp]:` — the forms Isar's
+# `thm_bind` admits, short of attributes nested inside attributes.  A name
+# may be symbolic (`\<Phi>:`), numeric (`1:`) or a star (`*:`, `**:`).
+_WRAP_LABEL = (rf"(?:(?:(?:{ISA_WORD_CHAR}|\.)+|\*+)\s*(?:\[[^\]]*\])?"
+               r"|\[[^\]]*\])\s*:(?!:)")
 # A goal command whose line ENDS at the command (with an optional label), which
 # is what makes looking ahead safe: `show ?thesis` has a remainder and stays
 # bare, `have` and `from p have b:` do not.  `also` / `finally` are excluded —
 # they are goal keywords that never carry a proposition of their own.
 _WRAPPED_GOAL_RE = re.compile(
     r"\b(?:have|show|hence|thus|obtain|consider|interpret)"
-    r"(?:\s+[A-Za-z][\w'.]*\s*:)?\s*$")
+    rf"(?:\s+{_WRAP_LABEL})?\s*$")
+# `obtain`'s own grammar, `obtain vars where label: "P"` [bare-wrapped]: the
+# line may end after the variables (`obtain i j`, the `where` opening the
+# next line), after `where`, or after the label.  A variable may carry an
+# unquoted type (`k::nat`); a quoted one is already read as the
+# proposition by `_split_command_prefix`, so it never reaches here.
+_WRAPPED_OBTAIN_RE = re.compile(
+    r"\bobtain(?P<vars>(?:\s+(?!where\b)[^\s:\"]+(?:\s*::\s*[^\s\"]+)?)*)"
+    rf"(?P<where>\s+where)?(?:\s+{_WRAP_LABEL})?\s*$")
+# What a wrapped statement line may open with before its delimiter: `where`
+# (only where `obtain` needs one) and a label.
+_WRAPPED_HEAD_RE = re.compile(rf"(?P<where>where\b\s*)?(?:{_WRAP_LABEL}\s*)?")
 
 
 def _statement_wrapped(lines: list[str], start_idx: int,
                        end_idx: int) -> tuple[int, int, str]:
-    r"""A goal whose proposition is wrapped onto a following line (issue #9).
+    r"""A goal whose proposition is wrapped onto a following line (issues #9,
+    #26).
 
     ``_extract_statement`` searched the command's own line only, so
 
@@ -320,25 +337,45 @@ def _statement_wrapped(lines: list[str], start_idx: int,
     6.2% of everything reported in ``n_bare``, and strongly style-dependent —
     5x that rate in a corpus that wraps more.
 
-    Deliberately narrow.  The command line must end *at* the goal keyword and
-    the next non-blank line must *open* with a delimiter; anything else stays
-    bare.  So `obtain x where` on its own line is still missed, since its
-    remainder is not a label — a residue left rather than guessed at, because
-    over-reaching here would invent statements, and the metrics are built to
-    undercount rather than overcount.
+    Deliberately narrow, but grammatical rather than literal.  The command line
+    must END where Isar's grammar lets a statement begin, and the next
+    non-blank line must reach a delimiter through nothing but what the grammar
+    puts in front of one:
+
+    * ``have`` / ``show`` / ... alone, or with its label (``have [simp]:``),
+      and the next line opening with the proposition or with ``label: "P"``;
+    * ``obtain vars where`` [label], the same, or ``obtain vars`` with the
+      next line opening ``where`` (`then obtain i j` / `where lu: "..."`).
+
+    Until #26 only the first, label-free next line was read, so `obtain S
+    where` / `S0: "S 0 \<in> A" and` stayed bare: 9,640 of the AFP's 12,026
+    ``unfound`` steps were ``obtain``, two thirds of them with the label
+    leading the next line.  Anything else still stays bare — a residue left
+    rather than guessed at, because over-reaching here would invent
+    statements, and the metrics are built to undercount rather than
+    overcount.  `interpret` is matched as a goal word but states a locale
+    expression, not a proposition, so :func:`bare_kind` books it
+    ``construction`` whatever this finds.
     """
-    if not _WRAPPED_GOAL_RE.search(lines[start_idx].rstrip()):
+    line = lines[start_idx].rstrip()
+    ob = _WRAPPED_OBTAIN_RE.search(line)
+    if ob is None and not _WRAPPED_GOAL_RE.search(line):
         return 0, 0, ""
+    # `obtain i j` / `where ...`: variables with no `where` yet.
+    need_where = bool(ob and ob.group("vars").strip() and not ob.group("where"))
     for i in range(start_idx + 1, min(end_idx, len(lines) - 1) + 1):
         if not lines[i].strip():
             continue      # blank, or prose the scan already blanked
-        m = _PROP_START_RE.match(lines[i].lstrip())
+        indent = len(lines[i]) - len(lines[i].lstrip())
+        head = _WRAPPED_HEAD_RE.match(lines[i], indent)
+        if bool(head.group("where")) != need_where:
+            return 0, 0, ""
+        m = _PROP_START_RE.match(lines[i], head.end())
         if m is None:
             return 0, 0, ""
-        col = len(lines[i]) - len(lines[i].lstrip())
-        if lines[i][col] == '"':
-            return _balance_quote(lines, i, col, end_idx)
-        return _balance_cartouche(lines, i, col, end_idx)
+        if lines[i][m.start()] == '"':
+            return _balance_quote(lines, i, m.start(), end_idx)
+        return _balance_cartouche(lines, i, m.start(), end_idx)
     return 0, 0, ""
 
 
@@ -367,7 +404,7 @@ _PROOF_TAIL_WORDS = frozenset({
 # allows it when the term is a single token — `show False`, `show thesis`,
 # `show ?case` — and the statement scanner looks only for delimiters, so these
 # are booked bare although the proposition is right there on the line.
-_UNDELIMITED_TERM_RE = re.compile(rf"^(?:{ISA_WORD_CHAR}|[?])+$")
+_UNDELIMITED_HEAD_RE = re.compile(rf"(?:{ISA_WORD_CHAR}|[?])+\s*")
 
 BARE_KINDS = ("construction", "undelimited", "unfound")
 
@@ -397,17 +434,17 @@ def bare_kind(step: Step, stripped: str) -> str:
     * ``construction`` — the step *cannot* carry an as-written proposition.
       `also` / `finally` continue a calculation, `interpret` instantiates a
       locale, and `show ?thesis` / `thus ?case` / `show ?rhs` name a goal
-      already in scope.  **88.70% of bare goal steps**, and a fact about how
+      already in scope.  **94.64% of bare goal steps**, and a fact about how
       Isar is written, not about this scanner.
     * ``undelimited`` — the proposition is on the line, written without quotes
-      or a cartouche (`hence False by simp`).  **5.29%.**  Recoverable in
-      principle; not read today.
-    * ``unfound`` — the scanner looked and found nothing.  **6.01%**, most of
-      it `obtain x where` with the statement on the next line, which
-      `_statement_wrapped` deliberately declines because the remainder is not a
-      label.  This is the residue, and the point of the split: it is the only
-      bucket whose growth is evidence about the SCANNER rather than about
-      writing style, and until now it was invisible inside `n_bare`.
+      or a cartouche (`hence False by simp`, `have False by(rule r)`, `show
+      thesis.`).  **5.09%.**  Recoverable in principle; not read today.
+    * ``unfound`` — the scanner looked and found nothing.  **0.26%** (498
+      steps), mostly `consider` with its case names (`(a) "P" | (b) "Q"`) on
+      the next line.  This is the residue, and the point of the split: it is
+      the only bucket whose growth is evidence about the SCANNER rather than
+      about writing style.  It was 6.01% (12,026) until #26, nearly all of it
+      a wrapped `obtain`, which ``_statement_wrapped`` now reads.
     """
     if step.stmt_text:
         return ""
@@ -419,10 +456,12 @@ def bare_kind(step: Step, stripped: str) -> str:
         return "construction"          # `?thesis`, `?case`, `?rhs`
     if not rest:
         return "unfound"               # command alone on its line
-    head, _, tail = rest.partition(" ")
-    if (_UNDELIMITED_TERM_RE.match(head)
-            and (not tail.strip()
-                 or tail.split()[0] in _PROOF_TAIL_WORDS)):
+    # The term runs to the first character no single-token term contains,
+    # so `False by(rule r)` and `thesis.` split as `False by simp` does.
+    m = _UNDELIMITED_HEAD_RE.match(rest)
+    tail = _CMD_TOKEN_RE.match(rest, m.end()) if m else None
+    if m and (not rest[m.end():].strip()
+              or (tail and tail.group(0) in _PROOF_TAIL_WORDS)):
         return "undelimited"
     return "unfound"
 

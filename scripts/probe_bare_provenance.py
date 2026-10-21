@@ -23,6 +23,13 @@ Whole AFP, 2026-08-31:
     unfound        11,766   6.01%   `obtain x where` with the statement below
     undelimited    10,354   5.29%   `hence False by simp` — written, unquoted
 
+Whole AFP, 2026-10-21, after #26 read a wrapped `obtain` and a label below:
+
+    913,905 goal steps, 188,289 bare (20.60%)
+    construction  178,204  94.64%
+    undelimited     9,587   5.09%
+    unfound           498   0.26%   `consider` / `(a) "P" | (b) "Q"`
+
 Session-at-a-time like `shape census`, so memory stays bounded by the largest
 session rather than the corpus.  `--limit=N` takes the first N sessions, which
 is an ALPHABETICAL PREFIX and not a sample — fine for a shape, never for a rate.

@@ -98,9 +98,9 @@ says **why**, in three keys that sum to it:
 
 | key | meaning | whole AFP |
 |---|---|---|
-| `construction` | the step cannot state one: `show ?thesis`, `thus ?case`, `also`, `interpret` | 88.70% |
-| `unfound` | the scanner looked and found nothing — mostly `obtain x where` with the statement on the next line | 6.01% |
-| `undelimited` | written on the line without quotes or a cartouche (`hence False by simp`) | 5.29% |
+| `construction` | the step cannot state one: `show ?thesis`, `thus ?case`, `also`, `interpret` | 94.64% |
+| `undelimited` | written on the line without quotes or a cartouche (`hence False by simp`) | 5.09% |
+| `unfound` | the scanner looked and found nothing — mostly `consider` with its case names (`(a) "P"`) on the next line | 0.26% |
 
 The split is what makes a change in `n_bare` readable: `construction` moves
 with writing style, `unfound` with this scanner. Pooled, a rise could be either,
