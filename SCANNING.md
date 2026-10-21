@@ -81,6 +81,12 @@ author chose it, and that choice is the only record of which results a
 development is *for*. `summary` counts `lemma` under L and the other three under
 T.
 
+`schematic_goal` is the fifth of these commands, declared on the next line of
+`Pure.thy` and registered through the same combinator with the `schematic`
+flag set. Its proof may instantiate the statement's `?x`, so what it records
+is a term the proof synthesised rather than a result. It is tagged
+`SCHEMATIC`, and `summary` footnotes it rather than counting it under L or T.
+
 A goal command a theory header declares (`keywords "AOT_theorem" :: thy_goal`)
 is tagged `GOAL`. Its kind says that it proves something, not which of the two
 it is. Reading `tts_lemma` as a lemma and `AOT_theorem` as a theorem would be

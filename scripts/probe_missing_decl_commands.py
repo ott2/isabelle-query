@@ -117,7 +117,7 @@ def main() -> None:
     print(f"  {'command':<22} {'no entry':>10} {'has entry':>10}  rate")
     for word in sorted(set(unseen) | set(seen), key=lambda w: -unseen[w]):
         n, s = unseen[word], seen[word]
-        if not n:
+        if not n and not s:
             continue
         print(f"  {word:<22} {n:>10,} {s:>10,}  {100.0 * n / (n + s):>5.1f}%")
     print("\n  with a namespace modifier (never an entry today):")

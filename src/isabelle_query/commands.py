@@ -153,18 +153,28 @@ def _evidence_count(n_marked: int, total: int) -> str:
     return ", with evidence" if total == 1 else f", {n_marked} of them with evidence"
 
 
+# The goal tags L and T leave out, each with the footnote that says why.
+_FOOTNOTED_GOALS = (
+    ("SCHEMATIC", "schematic goal", "schematic goals",
+     "(`schematic_goal`, tag SCHEMATIC)"),
+    ("GOAL", "goal", "goals", "of a header-declared command (tag GOAL)"),
+)
+
+
 def _goal_note(sections: list[TheorySection]) -> None:
-    """The footnote for `GOAL` entries, which L and T leave out.
+    """The footnotes for the goal entries L and T leave out.
 
     A header-declared goal command (`AOT_theorem`, `tts_lemma`) proves
     something, but its kind does not say whether a lemma or a result, so it
-    is counted in neither column [goal-tags].  A footnote rather than a G
-    column, since almost every theory has none."""
-    n = sum(1 for sec in sections for e in sec.entries if e.tag == "GOAL")
-    if n:
-        what = "entry is a goal" if n == 1 else "entries are goals"
-        print(f"\n{n:,} {what} of a header-declared command (tag GOAL), "
-              f"counted in neither L nor T.")
+    is counted in neither column [goal-tags].  A `schematic_goal` is neither
+    either: its proof synthesises a term (#23).  Footnotes rather than
+    columns, since almost every theory has none."""
+    tags = Counter(e.tag for sec in sections for e in sec.entries)
+    for tag, one, many, why in _FOOTNOTED_GOALS:
+        n = tags[tag]
+        if n:
+            what = f"entry is a {one}" if n == 1 else f"entries are {many}"
+            print(f"\n{n:,} {what} {why}, counted in neither L nor T.")
 
 
 def cmd_summary(sections: list[TheorySection], *,

@@ -44,7 +44,7 @@ from isabelle_query.model import _GOAL_TAGS, Entry, TheorySection, blank_all
 # It stays a whole-word test (`definitions`/`inductively` do not match), and
 # being zero-width it leaves the `line[len(keyword):]` slicing untouched.
 DECL_RE = re.compile(
-    r"^(definition|abbreviation|function|fun|primrec|inductive_set|inductive|lemmas|theorems|lemma|corollary|proposition|theorem|axiomatization|datatype|type_synonym|record|locale|class)(?=\s|$)"
+    r"^(definition|abbreviation|function|fun|primrec|inductive_set|inductive|lemmas|theorems|lemma|corollary|proposition|theorem|schematic_goal|axiomatization|datatype|type_synonym|record|locale|class)(?=\s|$)"
 )
 
 TAG_MAP = {
@@ -60,6 +60,13 @@ TAG_MAP = {
     # dead-code audit (#22) [goal-tags].  `model._GOAL_TAGS` is the family.
     "lemma": "LEMMA", "theorem": "THEOREM",
     "corollary": "COROLLARY", "proposition": "PROPOSITION",
+    # `schematic_goal` is the fifth `thy_goal_stmt` (Pure.thy:55), registered
+    # through the same `theorem` combinator with the `schematic` flag set: a
+    # goal whose `?x` the proof instantiates, so the fact records a term the
+    # proof synthesised (#23).  Neither a lemma nor a result, so `summary`
+    # counts it in a footnote, as it does GOAL.  `SCHEMATIC`, not the
+    # keyword in full, fits the 11-column tag field.
+    "schematic_goal": "SCHEMATIC",
     # `lemmas a = b c` binds a new name to existing facts [lemmas-entries]:
     # no statement and no proof, but a citable fact all the same, and the
     # names on its right-hand side are what it cites.  `theorems` is the same

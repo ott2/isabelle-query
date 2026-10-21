@@ -7,15 +7,16 @@ finding it again with `git log --grep`.
 Conventions for changing the tool (the CLI contract, verification habits) live
 in `CONTRIBUTING.md`.
 
-- [ ] `[decl-commands]` Three fact-declaring commands are **not declarations**,
-      so `query` cannot see them and — worse — they do not bound the previous
-      entry either, so the lemma above them swallows their proof.  `DECL_RE`
-      now lists `lemmas|lemma|corollary|proposition|theorem` and stops.
+- [ ] `[decl-commands]` One fact-declaring command, `named_theorems`, is
+      **not a declaration**, so `query` cannot see it.  The others shipped;
+      unseen, each also failed to bound the entry above it, which swallowed
+      its proof.  `DECL_RE` now lists
+      `lemmas|theorems|lemma|corollary|proposition|theorem|schematic_goal`.
       Measured over **11,604 theories** (the whole AFP + HOL/FOL/ZF) by
       `scripts/probe_missing_decl_commands.py`, command position only:
 
           lemmas           SHIPPED     proposition      SHIPPED (v0.9.0)
-          named_theorems      696      schematic_goal     810
+          named_theorems      696      schematic_goal     SHIPPED (#23)
           private lemma     SHIPPED    qualified lemma    SHIPPED (issue #19)
 
       Those replace an earlier 60-entry reading (3,491 / 601 / 207 / 160 / 275 /
@@ -35,6 +36,8 @@ in `CONTRIBUTING.md`.
       of proof text for `proposition`+`schematic_goal` and the realised census
       move was **+0.44% `n_steps`**, so the probe's estimate is worth trusting
       for `schematic_goal`'s remaining 0.18% rather than re-deriving.
+      **`schematic_goal` shipped as `SCHEMATIC` entries** (issue #23): 810 of
+      810 now indexed.
       **`lemmas` / `theorems` shipped as `LEMMAS` entries** (issue #16) —
       `git log --grep='\[lemmas-entries\]'`; 10,608 AFP entries.  `lemmas` had
       already bounded the entry above it, as one of `_SPAN_BOUNDARY_COMMANDS`.

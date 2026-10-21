@@ -425,8 +425,12 @@ _DEFINITION_TAGS = frozenset(
 # `tts_lemma`, `sepref_thm` :: thy_goal).  Its kind says it has a proof and
 # nothing about the role of what it proves, and reading the role off the
 # command's name would be a guess, so it is neither a lemma nor a result.
+#
+# `SCHEMATIC` is `schematic_goal`, the fifth `thy_goal_stmt` (Pure.thy:55):
+# the same combinator with the `schematic` flag, so the proof may instantiate
+# the statement's `?x` — a term synthesised by proving, not a result (#23).
 _GOAL_TAGS = frozenset({"LEMMA", "THEOREM", "COROLLARY", "PROPOSITION",
-                        "GOAL"})
+                        "SCHEMATIC", "GOAL"})
 # The goal keywords that announce a result rather than a step towards one —
 # `summary`'s T column, and the `keyword` evidence `unused` reports on a leaf.
 _RESULT_TAGS = frozenset({"THEOREM", "COROLLARY", "PROPOSITION"})

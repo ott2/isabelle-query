@@ -120,8 +120,9 @@ evidence it found for each entry and leaves the verdict to you:
 
 - **keyword** — stated as a `theorem`, `corollary` or `proposition`. A goal is
   tagged with the word its author wrote (`LEMMA`, `THEOREM`, `COROLLARY`,
-  `PROPOSITION`); a goal command a theory header declares (`AOT_theorem`,
-  `tts_lemma`) is `GOAL`, since its name is no evidence of either.
+  `PROPOSITION`, `SCHEMATIC` for `schematic_goal`); a goal command a theory
+  header declares (`AOT_theorem`, `tts_lemma`) is `GOAL`, since its name is
+  no evidence of either.
 - **implicit** — its own header hands it to a tool (`lemma foo [simp]:`,
   `[intro]`, `[code]`, a `named_theorems` name), which uses it uncited.
 - **doc** — a fact antiquotation (`@{thm foo}`, `\<^thm>‹foo›`) names it, in a
