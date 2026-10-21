@@ -126,7 +126,35 @@ class UnusedMarksTheImplicitOnes(Fixture):
         with contextlib.redirect_stdout(buf):
             commands.cmd_unused(self.sections,
                                 CmdFlags(roots=True, evidence="hide"))
-        self.assertTrue(buf.getvalue().startswith("1 unused roots:"))
+        self.assertTrue(buf.getvalue().startswith("1 unused root:\n"))
+
+
+class CountLinesAgreeWithTheCount(Fixture):
+    """A count of one takes the singular, on every `unused` count line."""
+
+    def head(self, **kw):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            commands.cmd_unused(self.sections, CmdFlags(**kw))
+        return buf.getvalue().splitlines()[0]
+
+    def test_entries(self):
+        self.assertEqual(self.head(evidence="hide"),
+                         "1 unused entry (zero callers):")
+
+    def test_by_theory(self):
+        self.assertTrue(self.head(evidence="hide", by_theory=True)
+                        .startswith("1 unused entry across 1 theory ("))
+
+    def test_plurals_stay_plural(self):
+        self.assertTrue(self.head(by_theory=True)
+                        .startswith("4 unused entries across 1 theory ("))
+
+    def test_evidence_clause(self):
+        self.assertEqual(commands._evidence_count(0, 1), "")
+        self.assertEqual(commands._evidence_count(1, 1), ", with evidence")
+        self.assertEqual(commands._evidence_count(1, 2),
+                         ", 1 of them with evidence")
 
 
 if __name__ == "__main__":

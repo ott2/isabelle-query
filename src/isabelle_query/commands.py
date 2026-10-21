@@ -138,6 +138,21 @@ def _tag_counts(sec: TheorySection) -> tuple[int, int, int]:
     return d, lem, thm
 
 
+def _counted(n: int, noun: str, plural: str = "") -> str:
+    """`n` and the noun agreeing with it: `1 unused root`, `2 unused roots`.
+    `plural` defaults to `noun + "s"`; give it for `entry` / `entries`."""
+    return f"{n} {noun if n == 1 else (plural or noun + 's')}"
+
+
+def _evidence_count(n_marked: int, total: int) -> str:
+    """The `, N of them with evidence` clause of an `unused` count line, or
+    `""` when no row carries evidence.  "1 of them" reads wrong after a
+    count of one, which is the one row, so that case says `, with evidence`."""
+    if not n_marked:
+        return ""
+    return ", with evidence" if total == 1 else f", {n_marked} of them with evidence"
+
+
 def _goal_note(sections: list[TheorySection]) -> None:
     """The footnote for `GOAL` entries, which L and T leave out.
 
@@ -2016,7 +2031,7 @@ def _render_unused(entries: list[tuple[str, Entry, int]],
     label = "transitively unused" if recursive else "unused"
     total = len(entries)
     n_marked = sum(1 for _, e, _ in entries if (marks or {}).get(e.name))
-    marked = f", {n_marked} of them with evidence" if n_marked else ""
+    marked = _evidence_count(n_marked, total)
 
     # Before the empty guard [count-mode-zero]: a project with nothing unused
     # has ZERO unused entries, and that is the answer a script wants — the one
@@ -2037,7 +2052,8 @@ def _render_unused(entries: list[tuple[str, Entry, int]],
         total_lines = sum(
             e.line_count for es in theory_entries.values()
             for e, _ in es if e.thy_line > 0)
-        print(f"{total} {label} entries across {len(theory_entries)} theories "
+        print(f"{_counted(total, label + ' entry', label + ' entries')} "
+              f"across {_counted(len(theory_entries), 'theory', 'theories')} "
               f"({total_lines} source lines):\n")
         for theory, count in counts.most_common():
             tes = theory_entries[theory]
@@ -2055,11 +2071,12 @@ def _render_unused(entries: list[tuple[str, Entry, int]],
         total_lines = sum(
             e.line_count for _, e, _ in entries
             if e.thy_line > 0)
-        print(f"{total} {label} entries "
+        print(f"{_counted(total, label + ' entry', label + ' entries')} "
               f"({direct} direct + {cascade} cascading, "
               f"{total_lines} source lines{marked}):\n")
     else:
-        print(f"{total} unused entries (zero callers{marked}):\n")
+        print(f"{_counted(total, 'unused entry', 'unused entries')} "
+              f"(zero callers{marked}):\n")
 
     print(f"{'Tag':<11}  {'Name':<42}  Theory  (span)")
     print(f"{'-' * 11:<11}  {'-' * 42:<42}  ------")
@@ -2092,8 +2109,8 @@ def _render_forest(sections: list[TheorySection],
         return
 
     n_marked = sum(1 for r, *_ in forest if (marks or {}).get(r))
-    marked = f", {n_marked} of them with evidence" if n_marked else ""
-    print(f"{len(forest)} unused roots{marked}:\n")
+    marked = _evidence_count(n_marked, len(forest))
+    print(f"{_counted(len(forest), 'unused root')}{marked}:\n")
     print(f"  {'Tag':<11s}  {'Root':<42s}  {'Excl':>5s}  {'Lines':>6s}  "
           f"{'Total':>5s}  {'Lines':>6s}  Theory")
     print(f"  {'-' * 11:<11s}  {'-' * 42:<42s}  {'-' * 5:>5s}  {'-' * 6:>6s}  "
@@ -2303,8 +2320,8 @@ def cmd_unused_locals(sections: list[TheorySection], flags: 'CmdFlags',
     if flags.by_theory:
         counts = Counter(labels.get(sec.path, sec.theory)
                          for sec, _b, _v in rows)
-        print(f"{len(rows)} unread local names across {len(counts)} "
-              f"theories:\n")
+        print(f"{_counted(len(rows), 'unread local name')} across "
+              f"{_counted(len(counts), 'theory', 'theories')}:\n")
         for thy, n in counts.most_common():
             print(f"  {n:4d}  {thy}")
         return
