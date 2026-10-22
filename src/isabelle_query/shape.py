@@ -75,7 +75,8 @@ from typing import NamedTuple
 from isabelle_query import graph
 from isabelle_query.model import Entry, TheorySection
 from isabelle_query.parsing import (
-    ISA_WORD_CHAR, LETTER_SYMS, PROOF_RE, _PROOF_INLINE_RE, _balanced_end)
+    ISA_SYMBOL, ISA_WORD_CHAR, LETTER_SYMS, PROOF_RE, _PROOF_INLINE_RE,
+    _balanced_end)
 from isabelle_query.graph import (
     CLOSING_KEYWORDS as _CLOSING_KEYWORDS,
     CONTEXT_KEYWORDS as _CONTEXT_KEYWORDS,
@@ -190,9 +191,12 @@ def _split_command_prefix(text: str) -> tuple[str, int]:
         if not seen_goal:
             seen_goal = any(t in _STEP_GOAL_KEYWORDS
                             for t in _CMD_TOKEN_RE.findall(segment))
-        if seen_goal:
+        # A delimiter right after `::` is a TYPE (`obtain x :: "nat set"
+        # where ...`), not the proposition: skipped like a cited fact.
+        is_type = text[:m.start()].rstrip().endswith("::")
+        if seen_goal and not is_type:
             return "".join(out), m.start()
-        # A fact reference in command position: skip its balanced span.
+        # A fact reference, or a type, in command position: skip its span.
         if text[m.start()] == '"':
             close = text.find('"', m.start() + 1)
             end = close + 1 if close >= 0 else -1
@@ -201,8 +205,9 @@ def _split_command_prefix(text: str) -> tuple[str, int]:
         if end <= m.start():
             # Unterminated on this line.  Nothing to the right can be read
             # reliably, so treat it as the proposition — what the scanner did
-            # before, which keeps the residual error one-directional.
-            return "".join(out), m.start()
+            # before, which keeps the residual error one-directional — unless
+            # it is a type, which is never the proposition: then none is found.
+            return "".join(out), (-1 if is_type else m.start())
         out.append(" " * (end - m.start()))
         i = end
 
@@ -308,10 +313,33 @@ class Step:
     closes_subgoal: bool = False
 
 
-# A goal command optionally carries a label: `have key: "P"`, `show *: "P"`.
+# A goal command optionally carries a label [obtain-label]: `have key: "P"`,
+# `have key [simp]: "P"`, and `obtain x y where key: "P"`, whose label comes
+# after `where`.  A name is what the citation extractor reads as one
+# (`graph._FACT_TOK_RE`): it may start with a digit or a symbol (`1:`,
+# `\<Phi>:`).  `x :: nat` is no label: the colon may not be doubled.
+_LABEL_NAME = rf"{ISA_WORD_CHAR}(?:{ISA_SYMBOL}|[\w'.])*"
 _STEP_LABEL_RE = re.compile(
-    r"\b(?:have|show|hence|thus|obtain|consider|interpret)\s+"
-    r"([A-Za-z][\w'.]*)\s*:")
+    r"\b(?:have|show|hence|thus|obtain|consider|interpret|where)\s+"
+    rf"({_LABEL_NAME})\s*(?:\[[^\]]*\])?\s*:(?!:)")
+# The label leading a wrapped statement's own line (`S0: "..."`, `where lu:`).
+_WRAPPED_LABEL_RE = re.compile(
+    rf"\s*(?:where\s+)?({_LABEL_NAME})\s*(?:\[[^\]]*\])?\s*:(?!:)")
+
+
+def _step_label(stripped: str, lines: list[str], line: int,
+                stmt_start: int) -> str:
+    """A goal step's own fact label, from its command prefix or, for a
+    statement wrapped below the command, from the head of the statement's
+    line — the two places Isar's grammar puts one."""
+    m = _STEP_LABEL_RE.search(_command_prefix(stripped))
+    if m:
+        return m.group(1)
+    if stmt_start > line:
+        m = _WRAPPED_LABEL_RE.match(lines[stmt_start - 1])
+        if m:
+            return m.group(1)
+    return ""
 
 
 def _extract_statement(lines: list[str], start_idx: int,
@@ -360,15 +388,20 @@ _WRAPPED_GOAL_RE = re.compile(
     rf"(?:\s+{_WRAP_LABEL})?\s*$")
 # `obtain`'s own grammar, `obtain vars where label: "P"` [bare-wrapped]: the
 # line may end after the variables (`obtain i j`, the `where` opening the
-# next line), after `where`, or after the label.  A variable may carry an
-# unquoted type (`k::nat`); a quoted one is already read as the
-# proposition by `_split_command_prefix`, so it never reaches here.
+# next line), after `where`, or after the label.  A variable may carry a
+# type (`k::nat`); a quoted one is blank by the time this reads the line
+# (`_split_command_prefix` skips it), leaving a bare `::`.
 _WRAPPED_OBTAIN_RE = re.compile(
-    r"\bobtain(?P<vars>(?:\s+(?!where\b)[^\s:\"]+(?:\s*::\s*[^\s\"]+)?)*)"
+    r"\bobtain(?P<vars>(?:\s+(?!where\b)[^\s:\"]+"
+    r"(?:\s*::(?:\s*(?!where\b)[^\s\"]+)?)?)*)"
     rf"(?P<where>\s+where)?(?:\s+{_WRAP_LABEL})?\s*$")
-# What a wrapped statement line may open with before its delimiter: `where`
-# (only where `obtain` needs one) and a label.
-_WRAPPED_HEAD_RE = re.compile(rf"(?P<where>where\b\s*)?(?:{_WRAP_LABEL}\s*)?")
+# What a wrapped statement line may open with before its delimiter: a
+# `consider` case name, with its own variables and `where` (`(a) x where`),
+# then `where` (only where `obtain` needs one) and a label.
+_WRAPPED_HEAD_RE = re.compile(
+    r"(?P<case>\(\s*[\w'.]+\s*\)\s*"
+    r"(?:(?:(?!where\b)[^\s\"(]+\s+)*where\b\s*)?)?"
+    rf"(?P<where>where\b\s*)?(?:{_WRAP_LABEL}\s*)?")
 
 
 def _statement_wrapped(lines: list[str], start_idx: int,
@@ -409,7 +442,9 @@ def _statement_wrapped(lines: list[str], start_idx: int,
     expression, not a proposition, so :func:`bare_kind` books it
     ``construction`` whatever this finds.
     """
-    line = (lines[start_idx] if first is None else first).rstrip()
+    # The command prefix, in which a quoted type (`x :: "nat set"`) is blank.
+    line = _command_prefix(lines[start_idx] if first is None else first)
+    line = line.rstrip()
     ob = _WRAPPED_OBTAIN_RE.search(line)
     if ob is None and not _WRAPPED_GOAL_RE.search(line):
         return 0, 0, ""
@@ -794,10 +829,9 @@ def _scan_steps(sec: TheorySection, entry: Entry,
         if kind == "goal":
             s_start, s_end, stmt = _extract_statement(
                 lines, c.line - 1, end - 1, first=text)
-            label_m = _STEP_LABEL_RE.search(_command_prefix(stripped))
             st = Step(sec.theory, entry.name, c.line, step_depth, c.kw, kind,
                       s_start, s_end, stmt,
-                      label=label_m.group(1) if label_m else "",
+                      label=_step_label(stripped, lines, c.line, s_start),
                       goal_cmd=_goal_command(stripped), block=cur_block,
                       method=method, col=c.col, src=text)
             # Classified here, where the command's own text is still in hand:

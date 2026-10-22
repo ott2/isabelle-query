@@ -155,16 +155,16 @@ class Unfound(unittest.TestCase):
 
 
 class Residue(unittest.TestCase):
-    """What `unfound` still holds after #26, and two spellings it no longer
-    takes in by mistake."""
+    """What `unfound` held after #26, and two spellings it no longer takes
+    in by mistake."""
 
     def setUp(self):
         self.pm, self.by_line = kinds("residue")
 
-    def test_case_named_consider_is_still_unfound(self):
-        # `consider` / `(a) "P" | (b) "Q"`: the case names stand before the
-        # delimiter, which `_statement_wrapped` does not read.  ~200 AFP rows.
-        self.assertEqual(self.by_line[33], "unfound")
+    def test_case_named_consider_below_is_read(self):
+        # `consider` / `(a) "P" | (b) "Q"`: the case name stands before the
+        # delimiter.  It was most of the residue after #26 (~200 AFP rows).
+        self.assertEqual(self.by_line[33], "")
 
     def test_a_method_glued_to_its_by_is_undelimited(self):
         # `have False by(rule r)` — SDG, WellFormProgs.  No space before the
