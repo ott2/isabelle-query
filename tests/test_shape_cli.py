@@ -113,6 +113,7 @@ class Wiring(unittest.TestCase):
 # -- JSONL schema (the join contract) ---------------------------------------
 
 _STEP_KEYS = {
+    "schema",
     "theory", "lemma", "line", "block", "depth", "kind", "kw", "goal_cmd",
     "method", "label", "stmt_start", "stmt_end", "w2_src", "w1_est", "col",
     "w1_schematic_est", "w1_bound_est", "const_est", "const_canon_est",
@@ -121,7 +122,7 @@ _STEP_KEYS = {
 _SUMMARY_KEYS = {
     # `session` is provenance, `null` outside a session-aware load — a corpus
     # run needs it because AFP theory names are not unique across entries.
-    "session",
+    "schema", "session",
     "theory", "lemma", "tag", "line", "n_steps", "n_goals", "n_bare",
     "depth_max", "w2_src_max",
     "w2_src_mean", "w2_src_p90", "w1_est_max", "w1_est_mean",
@@ -280,6 +281,26 @@ class Census(unittest.TestCase):
         finally:
             os.unlink(path)
         self.assertEqual(done, {("T", "a")})              # the good line only
+
+
+class Schema(unittest.TestCase):
+    """`schema` says which definitions a record's numbers follow [schema].
+
+    If this fails because SCHEMA moved, the move must be deliberate: bump
+    it only when a field's MEANING changes, and add the line saying how to
+    `shape.SCHEMA`'s history table."""
+
+    def test_the_schema_is_2(self):
+        self.assertEqual(shape.SCHEMA, 2)
+
+    def test_every_record_carries_it(self):
+        summary = _jsonl(_run(shape_cmds.cmd_shape_summary, [_sec()],
+                              as_json=True))
+        steps = _jsonl(_run(shape_cmds.cmd_shape_steps, [_sec()],
+                            span="Shape", as_json=True, all_steps=True))
+        self.assertTrue(summary and steps)
+        self.assertEqual({r["schema"] for r in summary + steps},
+                         {shape.SCHEMA})
 
 
 if __name__ == "__main__":

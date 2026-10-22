@@ -31,6 +31,10 @@ value can later be joined against a per-step LLM-tractability experiment
 with no re-instrumentation.  Estimator columns carry an ``_est`` suffix; exact
 source metrics do not.
 
+Every record carries ``schema`` (``shape.SCHEMA``): which definitions its
+numbers follow.  It is bumped when a field's meaning changes, so compare it
+before comparing two records; a record without it predates 1.1.0.
+
 **Per-step record** (``shape steps --json``, ``shape lemma --json``,
 ``shape widest --json``) — one object per Isar command (a step), wherever
 the line breaks fall:

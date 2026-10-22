@@ -2700,6 +2700,19 @@ def summarize(pm: ProofMetrics) -> ProofSummary:
         line=e.thy_line)
 
 
+# The census SCHEMA: which definitions a record's numbers follow [schema].
+# Bumped whenever a field's MEANING changes, not when one is added — a
+# reader compares it before comparing two records, since two rows with the
+# same keys can measure different things.  Records before 2 carry no field.
+#
+#   1  query 1.0.0 and earlier: one step per LINE.
+#   2  query 1.1.0: a step is an Isar command (#24); citations are counted
+#      on the goal they serve (M5a, M5c); `also` / `finally` are plumbing;
+#      labels read after `where` and attributes (M5b); every proof measured,
+#      `instance`, `sublocale`, ... included, with `tag` and `line`.
+SCHEMA = 2
+
+
 def step_record(step: Step, ctx: ClassifyCtx, lines: list[str],
                 cfg: CorpusConfig | None = None) -> dict:
     r"""One **per-step JSONL record** — the join contract (deliverable #2).
@@ -2719,6 +2732,7 @@ def step_record(step: Step, ctx: ClassifyCtx, lines: list[str],
     """
     w1 = w1_est(step, ctx)
     rec = {
+        "schema": SCHEMA,
         "theory": step.theory,
         "lemma": step.lemma,
         "line": step.line,
@@ -2759,7 +2773,8 @@ def summary_record(ps: ProofSummary) -> dict:
     return {
         # Provenance first — the coarsest key, and the one that disambiguates a
         # theory name repeated across AFP entries.  `null` when the load had no
-        # session context.
+        # session context.  The schema first of all: what the numbers mean.
+        "schema": SCHEMA,
         "session": ps.session,
         "theory": ps.theory,
         "lemma": ps.lemma,

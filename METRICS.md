@@ -102,6 +102,11 @@ are plumbing (Isabelle's `prf_decl` / `prf_chain`), not goals.
 
 ## JSONL records
 
+Every record carries `schema`, the version of the definitions its numbers
+follow. It changes when a field's meaning does, so records with different
+`schema` values do not compare, even where their keys match. 1.1.0 writes `2`;
+earlier records have no `schema` and follow `1`.
+
 `--json` (and `census`) emit one JSON object per line, keyed by a stable
 `(theory, lemma)` position, plus `(line, col)` for a step, so records join
 across runs without re-instrumentation. Two record shapes — per-step (`steps` / `lemma` / `widest`)
