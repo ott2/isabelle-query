@@ -316,6 +316,13 @@ class TheorySection:
         # the build's own first-declaration-wins dedup).  Consumed by
         # `summary --by-session` to roll theory-level counts up to the
         # session / corpus level.
+    proof_owners: list[Entry] = field(default_factory=list)
+        # Commands that carry a proof but are not goal entries — `instance`,
+        # `sublocale`, `termination`, `typedef`, `notepad`, ... — kept OUT of
+        # `entries`, so no verb but `shape` sees them [proof-owners].  Each is
+        # an `Entry` tagged with its command keyword (`INSTANCE`), named when
+        # the command declares a name and `?` otherwise, with `proof_line` /
+        # `body_end_line` set as for an entry.  See `parsing.PROOF_OWNERS`.
     line_window: tuple[int, int | None] | None = None
         # Optional inclusive 1-indexed [lo, hi] line window from a grep
         # `PATH:A..B` positional, set by `_load_sections(windows=True)`.

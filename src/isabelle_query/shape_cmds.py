@@ -66,11 +66,18 @@ key                  meaning
 ===================  =========================================================
 
 **Per-proof record** (``shape summary --json``, ``shape census``) — one object
-per proof-bearing entry: ``session`` (provenance: the Isabelle session the
+per PROOF: every goal entry's, and every proof a command carries without
+declaring a fact (``instance``, ``sublocale``, ``interpretation``,
+``termination``, ``typedef``, ``notepad``, ... — ``parsing.PROOF_OWNERS``).
+Fields: ``session`` (provenance: the Isabelle session the
 theory was declared by, ``null`` when the load had no session context — a corpus
 run needs it because 505 of 8,849 AFP theory names are used by more than one
 theory, so ``(theory, lemma)`` alone cannot say which entry a record came from),
-``theory``, ``lemma``, ``n_steps`` (Isar commands, not lines), ``n_goals``,
+``theory``, ``lemma`` (the declared name, ``?`` for none), ``tag`` (what owns
+the proof: ``LEMMA``, ``THEOREM``, ... or ``INSTANCE``, ``SUBLOCALE``, ...),
+``line`` (where it starts; ``(theory, line)`` is the key, since ``?`` names
+most owners and every anonymous lemma), ``n_steps`` (Isar commands, not
+lines), ``n_goals``,
 ``n_bare``, ``depth_max`` (Length: max proof-block nesting, 1 = flat),
 ``w2_src_max``/``_mean``/``_p90``, ``w1_est_max``/``_mean``,
 ``fanin_max``/``_mean`` (**M5a** explicit source-cited premises per goal step),
@@ -170,11 +177,11 @@ def _resolve_lemma(sections: list[TheorySection], name: str
     """Find the ``(section, entry)`` for a lemma NAME — exact match first, then
     unique-ish substring (matching ``show``'s exact-then-substring lookup)."""
     for sec in sections:
-        for e in sec.entries:
+        for e in sec.entries + sec.proof_owners:
             if e.name == name:
                 return sec, e
     for sec in sections:
-        for e in sec.entries:
+        for e in sec.entries + sec.proof_owners:
             if e.name != "?" and name in e.name:
                 return sec, e
     return None

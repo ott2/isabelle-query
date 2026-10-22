@@ -22,6 +22,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(__file__))
 from support import section_from  # noqa: E402
 from isabelle_query import shape  # noqa: E402
+import test_proof_owners  # noqa: E402
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -92,7 +93,7 @@ end
 '''
 
 # Fields that count lines rather than commands; everything else must hold.
-LINE_FIELDS = {"proof_lines", "proof_lines_code", "entry_lines"}
+LINE_FIELDS = {"proof_lines", "proof_lines_code", "entry_lines", "line"}
 
 
 def reflow(sec) -> str:
@@ -118,13 +119,18 @@ def reflow(sec) -> str:
 
 
 def records(sec) -> dict[str, dict]:
+    """Census records by name — `TAG:name` for a proof owner, and a `#k`
+    suffix on a repeat, since `?` names most owners and anonymous lemmas."""
     out = {}
-    for e in sec.entries:
-        pm = shape.analyze_proof(sec, e)
-        if pm is not None:
-            rec = shape.summary_record(shape.summarize(pm))
-            out[e.name] = {k: v for k, v in rec.items()
-                           if k not in LINE_FIELDS}
+    for pm in shape.analyze_sections([sec]):
+        rec = shape.summary_record(shape.summarize(pm))
+        key = (f"{pm.entry.tag}:{pm.entry.name}"
+               if pm.entry in sec.proof_owners else pm.entry.name)
+        k, base = 1, key
+        while key in out:
+            k += 1
+            key = f"{base}#{k}"
+        out[key] = {f: v for f, v in rec.items() if f not in LINE_FIELDS}
     return out
 
 
@@ -177,6 +183,9 @@ class ReflowingMovesNothing(unittest.TestCase):
 
     def test_more_shapes(self):
         self.assert_invariant(MORE, "More")
+
+    def test_proof_owners(self):
+        self.assert_invariant(test_proof_owners.THY, "Owners")
 
 
 class WhatTheReflowFound(unittest.TestCase):

@@ -2872,6 +2872,86 @@ def _attach_annotations(entries: list[Entry],
         e.annotations.append((cline, content, kind))
 
 
+# Commands that state and prove a goal but are not goal entries [proof-owners].
+# Every built-in command Pure and HOL declare with a goal kind (`thy_goal`,
+# `thy_goal_defn`) that is not already a goal entry, read off the keyword
+# declarations in Pure.thy and HOL's theories, plus `notepad`, which opens a
+# proof context without stating a goal.  The value says whether the command
+# declares a NAME a census record can carry (`typedef foo`, `function f`);
+# the rest are `?`.  `function` is also a `FUN` entry, but that entry is a
+# definition with no proof line, and its `by pat_completeness auto` was
+# measured by nothing.
+PROOF_OWNERS = {
+    "instance": False, "subclass": False, "interpretation": False,
+    "global_interpretation": False, "sublocale": False,
+    "termination": False, "function": True, "typedef": True,
+    "cpodef": True, "pcpodef": True, "lift_definition": True,
+    "quotient_type": True, "quotient_definition": False,
+    "specification": False, "code_pred": False, "free_constructors": False,
+    "old_rep_datatype": False, "bnf": False, "lift_bnf": False,
+    "functor": False, "corecursive": True, "primcorecursive": True,
+    "friend_of_corec": True, "spark_vc": True, "notepad": False,
+}
+# The first proof command of an owner's proof, in the outer view (terms and
+# comments blank): `instance proof`, `sublocale A < B by simp`, `instance ..`.
+_OWNER_PROOF_RE = re.compile(
+    r"(?<![\w'.])(?:proof|by|apply|using|unfolding)(?![\w'])"
+    r"|(?<![^\s])\.\.?(?![^\s])")
+# The declared name: the first identifier after the keyword, past a mode in
+# parentheses (`typedef (overloaded)`) and type parameters (`('a, 'b) t`).
+_OWNER_NAME_RE = re.compile(
+    r"\s*(?:\([^)]*\)\s*)*(?:'[\w']+\s+)?([A-Za-z][\w']*)")
+
+
+def extract_proof_owners(lines: list[str], outer_live: list[str],
+                         boundaries: list[int]) -> list[Entry]:
+    """The proof owners of one theory [proof-owners]: see `PROOF_OWNERS`.
+
+    ``outer_live`` has terms and comments blank, so a keyword is found only in
+    command position.  ``boundaries`` are the 1-indexed lines where something
+    else begins (entries, headings, structural commands); an owner's span runs
+    to the line before the next of them or of another owner.  A `notepad` runs
+    to its `end`.  An owner whose span holds no proof is dropped."""
+    found: list[tuple[int, str]] = []
+    for i, o in enumerate(outer_live):
+        m = _LEADING_CMD_RE.match(o.lstrip())
+        if m and m.group(1) in PROOF_OWNERS:
+            found.append((i + 1, m.group(1)))
+    stops = sorted(set(boundaries) | {ln for ln, _ in found})
+    owners: list[Entry] = []
+    for ln, kw in found:
+        col = outer_live[ln - 1].index(kw) + len(kw)
+        if kw == "notepad":
+            end = next((j + 1 for j in range(ln, len(outer_live))
+                        if _LEADING_CMD_RE.match(outer_live[j].lstrip())
+                        and _LEADING_CMD_RE.match(
+                            outer_live[j].lstrip()).group(1) == "end"),
+                       len(lines) + 1)
+            e = Entry("NOTEPAD", "?", lines[ln - 1].strip(), thy_line=ln,
+                      decl_end_line=ln, proof_line=ln)
+            e.thy_end = e.body_end_line = end - 1
+            owners.append(e)
+            continue
+        hi = next((s - 1 for s in stops if s > ln), len(lines))
+        proof_line = 0
+        for j in range(ln, hi + 1):
+            if _OWNER_PROOF_RE.search(outer_live[j - 1],
+                                      col if j == ln else 0):
+                proof_line = j
+                break
+        if not proof_line:
+            continue
+        name = "?"
+        if PROOF_OWNERS[kw]:
+            nm = _OWNER_NAME_RE.match(lines[ln - 1], col)
+            name = nm.group(1) if nm else "?"
+        e = Entry(kw.upper(), name, lines[ln - 1].strip(), thy_line=ln,
+                  decl_end_line=proof_line, proof_line=proof_line)
+        e.thy_end = hi
+        owners.append(e)
+    return owners
+
+
 def _parse_one(thy: str, thy_path: Path,
                lines: list[str] | None = None) -> TheorySection:
     """Parse a theory's source into a fully-populated TheorySection.
@@ -2940,13 +3020,24 @@ def _parse_one(thy: str, thy_path: Path,
         else:
             e.body_end_line = e.decl_end_line or e.thy_line
     _mark_shared_lines(entries)
+    owners = extract_proof_owners(
+        lines, outer_live,
+        [e.src_start for e in entries]
+        + [s[2] for s in outline]
+        + _structural_command_lines(lines, comment_ranges + nonisar_ranges,
+                                    outer))
+    for o in owners:
+        o.theory = thy
+        if o.tag != "NOTEPAD":
+            o.body_end_line = _proof_extent(sec_for_extent, o.proof_line,
+                                            o.thy_end, outer_live, prose_body)
     sec = TheorySection(thy, thy_path, entries, thy_lines=len(lines),
                         outline=outline, text_blocks=text_blocks,
                         heading_spans=heading_spans,
                         comment_ranges=comment_ranges,
                         nonisar_ranges=nonisar_ranges,
                         nonisar_spans=nonisar_spans,
-                        inner_spans=inner_spans)
+                        inner_spans=inner_spans, proof_owners=owners)
     if from_memory:
         # No disk path to lazily re-read (stdin); pin the source we already have.
         sec._source_cache = lines

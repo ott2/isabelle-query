@@ -48,58 +48,6 @@ in `CONTRIBUTING.md`.
       `shape`); `schematic_goal` has a proof.  Worth splitting if they do not
       share a change.
 
-- [ ] `[proof-bearing-commands]` **(scope call, not a defect.)**  A command that
-      proves something but declares no fact — `instance`, `sublocale`,
-      `interpretation`, `subclass`, `termination`, `notepad` — is not an
-      `Entry`, has no `proof_line`, and its proof is invisible to every `shape`
-      verb.  Measured by `scripts/probe_proof_bearing_commands.py` over 687
-      theories: **11,300 proof commands, ~2% of the corpus**, 100% unscanned
-      for each of these owners.
-      That 687 is every theory with a built session database, so it cannot see
-      the AFP.  Re-measured where the code runs — `probe_unscanned_exposure.py`,
-      all **11,604 theories**, counting owning commands and the lines they own
-      rather than markup proof commands (a coarser unit, same denominator both
-      sides): **16,778 commands owning 58,516 proof lines, 1.58%** of all proof
-      text.  So the ~2% rate holds corpus-wide, and this is **4x the census
-      exposure of `[decl-commands]`'s 0.37%** — the two are worth comparing
-      before either ships, since both move the same published numbers.
-
-          interpretation dual: abstract_boolean_algebra ...  HOL/Boolean_Algebras:140
-            apply standard                     <- five proof commands,
-                 apply (rule disj_conj_distrib)    none of them measured
-                apply (rule conj_disj_distrib)
-               apply simp_all
-            done
-
-          instance                6,706   sublocale         1,444
-          subclass                  707   lift_definition     577
-          global_interpretation     574   interpretation      752
-          termination               194   notepad             160
-
-      Corpus-wide, as owning commands and the lines each owns — the shape of
-      the population, which the 687-theory proof-command counts above do not
-      show:
-
-          instance        4,156  12,889   3.1     subclass         673   1,909  2.8
-          lift_definition 3,565   9,247   2.6     termination      657   1,889  2.9
-          sublocale       3,560  12,441   3.5     global_interp    623   4,444  7.1
-          interpretation  3,431  14,614   4.3     notepad          113   1,083  9.6
-
-      The question is whether `shape` measures *proofs* or *proofs of facts*.
-      Today it is the second, by accident rather than by decision — the entry
-      model is a **declaration** index and `shape` rides on it.  Both readings
-      are defensible and the numbers differ by ~1.6%, so the answer belongs in a
-      commit message before any code moves.
-      **"`instance` is mostly one-liners, so the population is not shaped like
-      the lemma population" does not survive the corpus-wide read**: `instance`
-      is 25% of the occurrences, not the 59% the sample suggested, and the
-      lines-per-command column splits the population rather than unifying it —
-      `instance` 3.1 against `global_interpretation` 7.1 and `notepad` 9.6.
-      Whatever the aggregate distributions do, it is not one keyword's shape
-      driving it, so that argument needs remaking from these numbers before it
-      is leaned on.  Distinct from `[decl-commands]`, which is a defect in
-      the same probe's other half.
-
 - [ ] `[comment-newline]` A `\<comment>` may be separated from its cartouche
       by a newline.  Isabelle's `comment_prefix` allows any blanks between the
       marker and the cartouche it owns, newlines included, so

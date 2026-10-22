@@ -795,6 +795,10 @@ def _scan_steps(sec: TheorySection, entry: Entry,
     open_blocks = 0
     block_stack: list[int] = []
     next_block = 0
+    if entry.tag == "NOTEPAD":
+        # A notepad IS a proof context, opened by `begin` rather than by a
+        # `proof`: its commands sit in frame 1 (depth 0), as a lemma's do.
+        open_blocks, block_stack, next_block = 1, [0], 1
     # `subgoal` (prf_script_goal) opens a goal that its own terminal method
     # closes; counted so that method does not close the goal around it.
     open_subgoals = 0
@@ -2467,12 +2471,20 @@ def analyze_proof(sec: TheorySection, entry: Entry,
 
 def analyze_sections(sections: list[TheorySection],
                      corpus_consts: frozenset[str] = CORPUS_CONSTANTS):
-    """Yield a :class:`ProofMetrics` for every entry across ``sections`` that
-    has a proof body, in source order — the shared spine of every ``shape``
-    subcommand.  Entries with no proof (definitions) are silently skipped, so a
-    consumer sees only the measurable proofs."""
+    """Yield a :class:`ProofMetrics` for every proof across ``sections``, in
+    source order — the shared spine of every ``shape`` subcommand.  Entries
+    with no proof (definitions) are silently skipped, so a consumer sees only
+    the measurable proofs.
+
+    That is every PROOF, not only the proofs of facts [proof-owners]: an
+    `instance`, `sublocale`, `termination`, `typedef` or `notepad` proof is
+    measured too, from ``TheorySection.proof_owners``.  Until 1.1.0 `shape`
+    rode on the declaration index, so these 1.6% of the AFP's proof text were
+    measured by nothing — by accident of the entry model, not by decision."""
     for sec in sections:
-        for entry in sec.entries:
+        owned = sorted(sec.entries + sec.proof_owners,
+                       key=lambda e: e.thy_line)
+        for entry in owned:
             pm = analyze_proof(sec, entry, corpus_consts)
             if pm is not None:
                 yield pm
@@ -2638,6 +2650,12 @@ class ProofSummary:
     # grain than `method_kinds`, which is its `by` / `apply` forms bucketed
     # by name.  Defaulted, like `session`, so positional construction holds.
     methods: dict[str, int] = field(default_factory=dict)
+    # What owns the proof, and where [proof-owners]: the entry's tag (`LEMMA`,
+    # `THEOREM`, ...) or the owning command's (`INSTANCE`, `TERMINATION`,
+    # ...), and its first line.  `(theory, lemma)` is not a key — `?` is
+    # every anonymous lemma and most owners — `(theory, line)` is.
+    tag: str = ""
+    line: int = 0
 
 
 def summarize(pm: ProofMetrics) -> ProofSummary:
@@ -2678,7 +2696,8 @@ def summarize(pm: ProofMetrics) -> ProofSummary:
         method_kind_counts(pm.steps), bare_kind_counts(pm.steps),
         ind.n, ind.terms_max, ind.arbitrary_max, ind.n_rule, ind.n_recursion,
         p_lines, p_lines_code, p_tokens, p_tokens_code, e.line_count,
-        session=pm.sec.session, methods=pm.methods)
+        session=pm.sec.session, methods=pm.methods, tag=e.tag,
+        line=e.thy_line)
 
 
 def step_record(step: Step, ctx: ClassifyCtx, lines: list[str],
@@ -2744,6 +2763,9 @@ def summary_record(ps: ProofSummary) -> dict:
         "session": ps.session,
         "theory": ps.theory,
         "lemma": ps.lemma,
+        # What owns the proof and where: `(theory, line)` is the record's key.
+        "tag": ps.tag,
+        "line": ps.line,
         "n_steps": ps.n_steps,
         "n_goals": ps.n_goals,
         "n_bare": ps.n_bare,

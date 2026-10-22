@@ -87,6 +87,13 @@ own); the name is the leading method, as `method_kinds` reads it; the
 modifier is the first `word:` inside it, the keyword and never its argument.
 `method_kinds` is the `by:` / `apply:` forms bucketed by name.
 
+**Every proof is measured**, not only the proofs of facts: an `instance`,
+`sublocale`, `interpretation`, `termination`, `typedef`, `notepad` and every
+other built-in command with a goal kind carries a proof, and gets a record of
+its own. `tag` says what owns the proof (`LEMMA`, `INSTANCE`, ...) and `line`
+where; `(theory, line)` is a record's key. Over the AFP these are 5.5% of
+proofs and 3.7% of proof code, `sublocale` and `interpretation` most of it.
+
 A **step is an Isar command**: `have a: "P" using q by simp` is three steps,
 whether on one line or three. Only `proof_lines` and `entry_lines` see the
 layout; every other column is the same however the proof is broken into lines.
