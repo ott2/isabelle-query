@@ -339,6 +339,7 @@ def _flags_from_ns(ns: argparse.Namespace) -> CmdFlags:
     f.keep = frozenset(n for arg in keep_args
                        for n in arg.split(",") if n.strip())
     f.evidence = getattr(ns, "evidence", "mark")
+    f.spans = getattr(ns, "spans", False)
     f.keep_file = getattr(ns, "keep_file", None)
     f.external = getattr(ns, "external", False)
     f.drop_names_upto = getattr(ns, "drop_names_upto", _DROP_NAMES_UPTO)
@@ -931,6 +932,8 @@ def _run_unused(ns: argparse.Namespace) -> None:
         if files:
             _usage_error("unused: PATH arguments need --locals; entry-level "
                          "`unused` is corpus-wide, scope it with -R")
+        if flags.spans:
+            _usage_error("unused: --spans needs --locals")
         sections = _load_sections(ns)
         if flags.keep_file is not None:
             if not Path(flags.keep_file).expanduser().is_file():
@@ -1603,6 +1606,18 @@ def _build_parser() -> argparse.ArgumentParser:
                         "fact is chained (`then`, `moreover`, ...), declared "
                         "(`[simp]`), in scope of a bare `fact` method or "
                         "cited as `‹P›` is used, and never reported")
+    p.add_argument("--spans", action="store_true",
+                   help="with --locals only: a column giving the lines that "
+                        "bind each name, `THY:A..B` — its statement (from a "
+                        "leading `from`/`with`/`then`) to the end of its "
+                        "proof, a method after `qed` included — when deleting "
+                        "them removes that binding and nothing else.  "
+                        "Otherwise the span says why not: `clause-of` (one "
+                        "fact of a statement binding several), `shares-line` "
+                        "(another command is on its first or last line), "
+                        "`binds-vars` (an `obtain` whose variables may still "
+                        "be used), or `premise` alone (a statement premise; "
+                        "dropping it changes the statement and its callers)")
     p.add_argument("files", nargs="*", metavar="PATH",
                    help="with --locals only: the files, theories or "
                         "`THY:A..B` / `THY:ENTRY` selections to scan "

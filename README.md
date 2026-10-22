@@ -165,7 +165,16 @@ all, and a literal fact `‹P›` reads the fact stated as `P`.
 ```sh
 query unused --locals Foo.thy:120..260   # the proofs a diff hunk touches
 query unused --locals Foo:bar_lemma      # one proof
+query unused --locals --spans Foo        # ... with the lines that bind each
 ```
+
+`--spans` adds the lines that bind each name: `Foo:A..B` runs from its
+statement (or the `from` / `then` leading into it) to the end of its proof,
+including a method after `qed`. Deleting those lines removes the binding and
+nothing else. When they cannot simply be cut, the span says why:
+`clause-of` (one fact of `have a: … and b: …`), `shares-line` (another
+command is on its first or last line), `binds-vars` (an `obtain` whose
+variables may still be used), or `premise` alone.
 
 The rows are **candidates, not a delete list**: a fact read through a bundle
 cited under another name, by `case` position (`1(2)`), by a literal fact

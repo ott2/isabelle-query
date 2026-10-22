@@ -510,6 +510,7 @@ class CmdFlags:
     keep: frozenset[str] = frozenset()  # --keep (unused: live roots)
     keep_file: str | None = None  # --keep-file / `.query-keep` [keep-file]
     evidence: str = "mark"       # --evidence mark|hide (unused) [leaf-evidence]
+    spans: bool = False          # --spans (unused --locals) [local-spans]
     external: bool = False       # --external (callers: skip defining theory)
     drop_names_upto: int = _DROP_NAMES_UPTO  # --drop-names-upto (call graph)
     # --reach: "closure" attributes a citation only to declarations the citing

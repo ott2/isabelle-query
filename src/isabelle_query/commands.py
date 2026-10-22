@@ -57,7 +57,7 @@ from isabelle_query.graph import (
 from isabelle_query import graph as _graph
 from isabelle_query import sites as _sites
 from isabelle_query.proof_locals import (
-    LocalBinding, premise_cascade, unread_locals)
+    LocalBinding, premise_cascade, span_text, unread_locals)
 from isabelle_query.render import (
     _emit_matches,
     _format_extent,
@@ -2335,15 +2335,19 @@ def cmd_unused_locals(sections: list[TheorySection], flags: 'CmdFlags',
         for thy, n in counts.most_common():
             print(f"  {n:4d}  {thy}")
         return
-    cells = [(f"{labels.get(sec.path, sec.theory)}:{b.line}", b.name, b.kind,
-              b.entry, via) for sec, b, via in rows]
-    w0 = max(len(c[0]) for c in cells)
-    w1 = max(len(c[1]) for c in cells)
-    w2 = max(len(c[2]) for c in cells)
-    w3 = max(len(c[3]) for c in cells) if any(c[4] for c in cells) else 0
-    for locus, name, kind, entry, via in cells:
-        tail = f"{entry:<{w3}}  {via}" if via else entry
-        print(f"{locus:<{w0}}  {name:<{w1}}  {kind:<{w2}}  {tail}")
+    cells = []
+    for sec, b, via in rows:
+        label = labels.get(sec.path, sec.theory)
+        row = [f"{label}:{b.line}", b.name, b.kind, b.entry]
+        if flags.spans:
+            row.append(span_text(label, b))
+        cells.append(row + [via] if via else row)
+    # Every cell but a row's last is padded to the widest in its column.
+    widths = [max(len(c[k]) for c in cells if len(c) > k)
+              for k in range(max(len(c) for c in cells))]
+    for row in cells:
+        print("  ".join([f"{c:<{widths[k]}}" for k, c in enumerate(row[:-1])]
+                        + [row[-1]]))
 
 
 def _grep_sections(sections: list[TheorySection], pat: re.Pattern

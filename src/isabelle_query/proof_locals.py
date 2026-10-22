@@ -42,6 +42,14 @@ A labelled fact given a declaring attribute (``have s [simp]:``) is read by
 the rule set it joined and is never reported; a transforming attribute
 (``[rule_format]``, ``[symmetric]``) adds it to nothing and does not protect it.
 
+Each binding also records the lines that bind it [local-spans], for a caller
+that means to cut them: from its statement — or the ``from`` / ``with`` /
+``then`` leading into it — to the end of its proof, a method after ``qed``
+included.  ``span_text`` prints them, or the reason they cannot simply go:
+a clause of a statement binding several facts, a line shared with another
+command, an ``obtain`` that also fixes variables, a statement premise, or a
+proof the walk never saw close.
+
 The result is a list of CANDIDATES, not a delete list, because the errors run
 both ways.  A fact can be used where no scan of the proof sees its name —
 through a bundle cited under another name, by position (``case`` numbering
@@ -108,6 +116,14 @@ _TERMINATORS = frozenset({"by", "done", "sorry", "oops", ".", ".."})
 # (`using ‹P›`, `by (rule ‹P›)`) and not a statement.
 _FACT_CMDS = frozenset({"using", "from", "with", "unfolding", "note",
                         "by", "apply", "apply_end", "proof", "qed"})
+# Commands that start a statement, and those that may lead into one from
+# the line above (`from x` / `then` / `with x`, then `have …`): a statement's
+# lines start at its lead [local-spans].
+_STMT_CMDS = frozenset({"have", "hence", "show", "thus", "obtain", "consider",
+                        "note", "let", "define"})
+_LEADS = frozenset({"from", "with", "then"})
+# Commands whose `and` separates two facts of one statement.
+_CLAUSE_CMDS = frozenset({"have", "hence", "show", "thus", "note", "let"})
 # Commands followed by a proof method.
 _METHOD_CMDS = frozenset({"by", "apply", "apply_end", "proof", "qed"})
 
@@ -131,6 +147,15 @@ class LocalBinding:
     # What it states, each proposition whitespace-collapsed: a literal fact
     # `‹P›` reads the fact whose statement is `P`, whatever its name.
     stmts: list[str] = field(default_factory=list)
+    # The lines that bind it [local-spans]: its statement — from a `from` /
+    # `with` / `then` leading into it — to the end of its proof, a method
+    # after `qed` included.  0 for a statement premise, which has no lines
+    # of its own to cut.
+    start: int = 0
+    end: int = 0
+    clause: bool = False      # one of several facts one statement binds
+    shared: bool = False      # its first or last line holds another command
+    binds_vars: bool = False  # an `obtain` that also fixes variables
 
 
 @dataclass
@@ -260,6 +285,33 @@ class _Walk:
     # A goal's proof has ended (`by`, `qed`, `done`, …) but the method after
     # it is still being read; its labels bind at the next command.
     proved: bool = False
+    # Where the statement being read began, `(line, col)`; the bindings it
+    # has made so far; whether it binds several facts (`a: … and b: …`).
+    stmt_start: tuple[int, int] = (0, 0)
+    stmt: list[LocalBinding] = field(default_factory=list)
+    multi: bool = False
+
+    def made(self, b: LocalBinding, outer: list[str]) -> None:
+        """*b* is bound by the statement being read: give it its first line."""
+        ln, col = self.stmt_start
+        b.start = ln or b.line
+        b.shared = bool(ln and outer[ln - 1][:col].strip())
+        b.clause = self.multi
+        self.stmt.append(b)
+
+    def several(self) -> None:
+        """An `and` between clauses: the statement binds more than one."""
+        self.multi = True
+        for b in self.stmt:
+            b.clause = True
+
+    def ends(self, bindings, last: int, next_line: int) -> None:
+        """*bindings* end on line *last*; the next command starts on
+        *next_line*, which shares it when they are equal."""
+        for b in bindings:
+            if b.start:
+                b.end = last
+                b.shared = b.shared or next_line == last
 
     def read(self, key: tuple[str, str]) -> None:
         for scope in reversed(self.scopes):
@@ -286,12 +338,13 @@ class _Walk:
             if text in b.stmts:
                 b.read = True
 
-    def settle(self) -> None:
+    def settle(self, last: int, next_line: int) -> None:
         """The method that closed a goal has been read: bind its labels now,
-        so `by (simp add: a)` in `have a: … by …` cites the OLD `a`."""
+        so `by (simp add: a)` in `have a: … by …` cites the OLD `a`.  The
+        goal's lines end with that method, on line *last*."""
         if self.proved:
             self.proved = False
-            self.prove()
+            self.ends(self.prove(), last, next_line)
             self.close_subgoal()
 
     def read_this(self) -> None:
@@ -315,27 +368,31 @@ class _Walk:
         if self.kinds[-1] == "subgoal":
             self.close()
 
-    def finish_command(self) -> None:
-        """Bind what `note` / `define` / `let` wrote, now that it is done."""
+    def finish_command(self, last: int, next_line: int) -> None:
+        """Bind what `note` / `define` / `let` wrote, now that it is done:
+        its lines end on *last*."""
         if not self.pending:
             return
         facts: list[LocalBinding] = []
         for key, group in self.pending:
             self.bind(key, group)
+            self.ends(group, last, next_line)
             if group and group[0].kind in ("note", "define"):
                 facts.extend(b for b in group if b not in facts)
         if facts:
             self.this = facts
         self.pending = []
 
-    def prove(self) -> None:
-        """The goal open at the current depth is proved: bind its labels."""
+    def prove(self) -> list[LocalBinding]:
+        """The goal open at the current depth is proved: bind its labels,
+        and return them."""
         done = self.goals.pop(len(self.scopes), None)
         if done is None:
-            return
+            return []
         for key, b in done:
             self.bind(key, [b])
         self.this = [b for _, b in done]
+        return self.this
 
 
 def _attr_words(toks: list[_Tok], i: int) -> tuple[set[str], int]:
@@ -482,7 +539,7 @@ def _walk(sec: TheorySection, entry: Entry,
     walks the same structure for `body_end_line` [body-end-text]; over the AFP
     the two agree on all 297,954 proofs, and a test holds them together."""
     toks = _body_tokens(sec, entry)
-    live_src = sec.live_source()
+    live_src, outer_src = sec.live_source(), sec.outer_source()
     if ignore:
         # `(line, col)` of name tokens that do not count as reads: the
         # `-r` premise cascade asks whether a label is read ELSEWHERE.
@@ -497,6 +554,7 @@ def _walk(sec: TheorySection, entry: Entry,
     variables = False     # names here are being bound, not read
     after_type = False    # after `::` in a variable list: a type, not a name
     define_group: list[LocalBinding] = []
+    obtain_vars = False   # this `obtain` fixes variables before `where`
     # Past the entry's own closing `by` / `qed`: its method is still read —
     # `by (auto simp: a)` is where a statement premise is most often cited —
     # up to the next command, which is the end of the proof.
@@ -532,8 +590,9 @@ def _walk(sec: TheorySection, entry: Entry,
         if nest == 0 and (s in _COMMANDS or s in ("{", "}", ".", "..")):
             if closing:
                 break
-            w.settle()
-            w.finish_command()
+            last = toks[i - 1].line if i else t.line
+            w.settle(last, t.line)
+            w.finish_command(last, t.line)
             if this_stale:
                 w.this, this_stale = [], False
             if s in _CHAIN_READERS:
@@ -562,6 +621,10 @@ def _walk(sec: TheorySection, entry: Entry,
                 w.proved = True
             if s in _GOAL_CMDS:
                 w.goals[len(w.scopes)] = []
+            if (s in _STMT_CMDS or s in _LEADS) and cmd not in _LEADS:
+                w.stmt_start = (t.line, t.col)
+            if s in _STMT_CMDS:
+                w.stmt, w.multi, obtain_vars = [], False, False
             cmd = s
             label_next = s in ("have", "hence", "note", "let")
             premises = after_where = after_type = False
@@ -581,6 +644,10 @@ def _walk(sec: TheorySection, entry: Entry,
                 label_next = cmd in ("obtain", "define")
             else:   # and
                 after_type = False
+                if not (premises or variables) and (
+                        cmd in _CLAUSE_CMDS
+                        or (cmd in ("obtain", "define") and after_where)):
+                    w.several()
                 label_next = (cmd in ("have", "hence", "note", "let")
                               or (cmd in ("obtain", "define") and after_where))
             i += 1
@@ -589,6 +656,7 @@ def _walk(sec: TheorySection, entry: Entry,
             j = i + 1
             if j < len(toks) and toks[j].text == "=":
                 b = LocalBinding(s, "let", t.line, entry.name)
+                w.made(b, outer_src)
                 w.bindings.append(b)
                 w.pending.append((("t", s), [b]))
                 label_next = False
@@ -616,6 +684,8 @@ def _walk(sec: TheorySection, entry: Entry,
                     # A `where` label is another handle on the definitions.
                     w.pending.append((("f", name), define_group))
                     continue
+                w.made(b, outer_src)
+                b.binds_vars = cmd == "obtain" and obtain_vars
                 w.bindings.append(b)
                 if cmd == "note":
                     w.pending.append((("f", name), [b]))
@@ -624,13 +694,19 @@ def _walk(sec: TheorySection, entry: Entry,
                         (("f", name), b))
                 continue
         if variables:
+            if (cmd == "obtain" and not after_where and not after_type
+                    and _is_name(s)):
+                obtain_vars = True
             # Only the names before `where`: a `for` after it binds a
             # parameter of the defining equation, not a new constant.
             if (cmd == "define" and not after_where and not after_type
                     and _is_name(s)):
                 b = LocalBinding(s, "define", t.line, entry.name)
+                w.made(b, outer_src)
                 w.bindings.append(b)
                 define_group.append(b)
+                if len(define_group) > 1:
+                    w.several()
                 w.pending.append((("t", s), [b]))
                 w.pending.append((("f", s + "_def"), [b]))
             i += 1
@@ -646,6 +722,23 @@ def _walk(sec: TheorySection, entry: Entry,
             w.read(("f", _unqualified(s)))
         i += 1
     return w
+
+
+def span_text(label: str, b: LocalBinding) -> str:
+    """The `--spans` cell of *b*, its theory printed as *label*
+    [local-spans].  A bare `THY:A..B` is a delete span: removing those
+    lines removes the binding and nothing else.  Anything else says why
+    not, most binding reason first."""
+    if not b.start:
+        return "premise"
+    if not b.end:
+        return f"unclosed {label}:{b.start}"
+    span = f"{label}:{b.start}..{b.end}"
+    for tag, on in (("clause-of", b.clause), ("binds-vars", b.binds_vars),
+                    ("shares-line", b.shared)):
+        if on:
+            return f"{tag} {span}"
+    return span
 
 
 def _unqualified(name: str) -> str:

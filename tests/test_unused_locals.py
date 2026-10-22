@@ -338,6 +338,86 @@ class ReadByStatement(_Root):
         ])
 
 
+# The lines that bind each name (issue #27) [local-spans].  Hand-read, every
+# binding unread (an unlabelled `have` sits before each `moreover` / `then`
+# so that neither reads a labelled fact):
+#   a 7..8, its `by` on the next line;  b, c share line 9;  d, e are two
+#   clauses of line 10;  f runs 11..14, from its `from` to `qed simp_all`;
+#   g's `obtain` also fixes `x`;  i shares 17 with `moreover`;  j runs from
+#   its `then` (19) to 20;  k is 21;  m, n are one `define` (22);  p is a
+#   statement premise.
+SPANS = r'''theory Spans
+  imports Main
+begin
+
+lemma spans: "True"
+proof -
+  have a: "True"
+    by simp
+  have b: "True" by simp have c: "True" by simp
+  have d: "True" and e: "True" by simp
+  from TrueI have f: "True"
+  proof -
+    show ?thesis by simp
+  qed simp_all
+  obtain x :: nat where g: "x = x" by simp
+  have "True" by simp
+  moreover have i: "True" by simp
+  have "True" by simp
+  then
+    have j: "True" by simp
+  note k = TrueI
+  define m n where "m = (0::nat)" and "n = (1::nat)"
+  have "x = x" by simp
+  show ?thesis by simp
+qed
+
+lemma premise: assumes p: "True" shows "True"
+  by simp
+
+end
+'''
+
+
+class Spans(_Root):
+    THEORIES = {"Spans": SPANS}
+
+    def test_exactly_the_hand_read_spans(self):
+        out, code = self.run_cli("--locals", "--spans")
+        rows = [ln.split(None, 4) for ln in out.splitlines()]
+        self.assertEqual(code, 0)
+        self.assertEqual([(r[1], r[4]) for r in rows], [
+            ("a", "Spans:7..8"),
+            ("b", "shares-line Spans:9..9"),
+            ("c", "shares-line Spans:9..9"),
+            ("d", "clause-of Spans:10..10"),
+            ("e", "clause-of Spans:10..10"),
+            ("f", "Spans:11..14"),
+            ("g", "binds-vars Spans:15..15"),
+            ("i", "shares-line Spans:17..17"),
+            ("j", "Spans:19..20"),
+            ("k", "Spans:21..21"),
+            ("m", "clause-of Spans:22..22"),
+            ("n", "clause-of Spans:22..22"),
+            ("p", "premise"),
+        ])
+
+    def test_a_span_is_the_locus_grammar(self):
+        # `lines` takes the span as printed: it is input as well as output.
+        out, _ = self.run_cli("--locals", "--spans")
+        span = out.splitlines()[5].split()[-1]
+        self.assertEqual(span, "Spans:11..14")
+        self.assertIsNotNone(cli._parse_locus(span))
+
+    def test_spans_need_locals(self):
+        self.assertEqual(self.run_cli("--spans")[1], 2)
+
+    def test_without_the_flag_the_rows_are_unchanged(self):
+        out, _ = self.run_cli("--locals")
+        self.assertEqual(out.splitlines()[0].split(),
+                         ["Spans:7", "a", "have", "spans"])
+
+
 EXTENT = r'''theory Extent
   imports Main
 begin

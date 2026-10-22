@@ -2,9 +2,10 @@
 r"""Every `unused --locals` row over a corpus, as TSV, for diffing two versions
 of the scan [fact-method].
 
-    python scripts/probe_locals_rows.py [ROOT] [--limit=N] > rows.tsv
+    python scripts/probe_locals_rows.py [ROOT] [--limit=N] [--spans] > rows.tsv
 
-One line per unread binding: theory path, line, name, kind, entry.  Run a
+One line per unread binding: theory path, line, name, kind, entry, and with
+`--spans` the `unused --locals --spans` cell [local-spans].  Run a
 copy under `.stage/old/scripts/` with `PYTHONPATH=.stage/old/src` for the
 HEAD baseline, then `diff` the two files (`probe_locals_why.py` sorts what
 changed).
@@ -28,6 +29,7 @@ def main() -> int:
     opt = {a.split("=")[0]: (a.split("=") + [""])[1] for a in sys.argv[1:]
            if a.startswith("--")}
     limit = int(opt.get("--limit") or 0) or None
+    spans = "--spans" in opt
     sessions = iter_sessions(root)
     if limit:
         sessions = sessions[:limit]
@@ -49,6 +51,8 @@ def main() -> int:
                         continue
                     n_unread += 1
                     row = [str(rel), str(b.line), b.name, b.kind, b.entry]
+                    if spans:
+                        row.append(proof_locals.span_text(sec.theory, b))
                     print("\t".join(row))
     print(f"{n_unread:,} unread of {n_bound:,} bindings", file=sys.stderr)
     return 0
