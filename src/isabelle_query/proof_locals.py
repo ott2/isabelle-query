@@ -562,6 +562,7 @@ def _walk(sec: TheorySection, entry: Entry,
     # `from x` / `assume` rebind `this` when they FINISH: the `this` in
     # `from this` is still the previous fact.
     this_stale = False
+    begun = False         # past the statement: a command has been read
     i = 0
     while i < len(toks):
         t = toks[i]
@@ -590,6 +591,7 @@ def _walk(sec: TheorySection, entry: Entry,
         if nest == 0 and (s in _COMMANDS or s in ("{", "}", ".", "..")):
             if closing:
                 break
+            begun = True
             last = toks[i - 1].line if i else t.line
             w.settle(last, t.line)
             w.finish_command(last, t.line)
@@ -711,7 +713,11 @@ def _walk(sec: TheorySection, entry: Entry,
                 w.pending.append((("f", s + "_def"), [b]))
             i += 1
             continue
-        if s == "this":
+        if not begun:
+            # Still in the statement (`lemma t: assumes p: "P" shows … by
+            # simp` on one line): its words declare, and cite nothing local.
+            pass
+        elif s == "this":
             w.read_this()
         elif (s == "fact" and cmd in _METHOD_CMDS
               and _bare(live_src[t.line - 1], t.col + len(s))):

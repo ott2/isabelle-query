@@ -409,6 +409,16 @@ class Spans(_Root):
         self.assertEqual(span, "Spans:11..14")
         self.assertIsNotNone(cli._parse_locus(span))
 
+    def test_a_one_line_lemma_does_not_read_its_own_label(self):
+        # The proof line is read whole, statement and all; the statement's
+        # `p:` declares `p` and must not count as its reader.
+        self.THEORIES = {"One": 'theory One imports Main begin\n'
+                         'lemma t: assumes p: "True" shows "True" by simp\n'
+                         'end\n'}
+        self.tearDown()
+        self.setUp()
+        self.assertEqual(self.unread(), [(2, "p", "assumes", "t")])
+
     def test_spans_need_locals(self):
         self.assertEqual(self.run_cli("--spans")[1], 2)
 
