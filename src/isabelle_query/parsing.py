@@ -2523,7 +2523,20 @@ _SPAN_BOUNDARY_COMMANDS = frozenset({
 }) | _ML_BODY_COMMANDS | _ML_FILE_COMMANDS
 # Uppercase-initial too: the ML commands (`ML`, `ML_file`, `SML_file`) are
 # boundaries, and a lowercase-only anchor would never see them.
-_LEADING_CMD_RE = re.compile(r"^([A-Za-z][A-Za-z_0-9]*)")
+#
+# The word must END there [early-end].  Isabelle's lexer takes the longest
+# token, so `context.safe_unfolds`, `context'` and `context\<^sub>1` are names
+# and never the keyword `context` — a fact cited at the head of a line in a
+# `note` list ended the lemma there (Superposition_Soundness:400).  What
+# continues a name: a word character, `'`, a sub/superscript, a letter symbol,
+# or a `.` with another name part after it.  Not a bare `.`: `instance..` is
+# the keyword and then the `..` proof.  Not any symbol: `ML\<open>` is written
+# with no space.
+_LETTER_SYM = r"\\<(?:{})>".format(
+    "|".join(sorted(sym[2:-1] for sym in LETTER_SYMS)))
+_NAME_GOES_ON = (rf"[\w']|\\<\^su[bp]>|{_LETTER_SYM}"
+                 rf"|\.(?:[A-Za-z]|{_LETTER_SYM})")
+_LEADING_CMD_RE = re.compile(rf"^([A-Za-z][A-Za-z_0-9]*+)(?!{_NAME_GOES_ON})")
 
 
 def _structural_command_lines(
