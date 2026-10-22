@@ -24,12 +24,19 @@ once" count gets each of them wrong:
   after the block closes, and ``next`` starts a fresh branch.  The same label
   reused in two ``case`` branches is two bindings, each needing its own reader.
 * **Binding time.**  ``have a: "P" using a by simp`` cites the OLD ``a``: the
-  label is bound when the statement's proof finishes, not when it is written.
-  ``note`` / ``define`` / ``let`` bind at the end of their own command.
+  label is bound when the statement's proof finishes, not when it is written
+  — after the method of its ``by`` / ``qed`` too, so ``by (simp add: a)``
+  cites the old one as well.  ``note`` / ``define`` / ``let`` bind at the end
+  of their own command.
 * **``this``.**  A fact consumed by chaining (``then``, ``hence``, ``thus``,
   ``with``, ``moreover``, ``ultimately``, ``also``, ``finally``, or a written
   ``this``) is used although its name is not.  That label is redundant rather
   than dead, and the question here is about dead facts, so it is not reported.
+* **Statements** (issue #27).  A fact can be read with no name at all.  A
+  bare ``fact`` method (``by fact``, ``(fact | rule refl)+``) closes its goal
+  with ANY fact in scope whose statement matches, so it reads every one
+  visible there; ``fact a`` reads ``a`` alone.  A literal fact ``‹P›`` reads
+  the visible facts whose statement is written ``P``, whitespace aside.
 
 A labelled fact given a declaring attribute (``have s [simp]:``) is read by
 the rule set it joined and is never reported; a transforming attribute
@@ -38,11 +45,12 @@ the rule set it joined and is never reported; a transforming attribute
 The result is a list of CANDIDATES, not a delete list, because the errors run
 both ways.  A fact can be used where no scan of the proof sees its name —
 through a bundle cited under another name, by position (``case`` numbering
-such as ``1(2)``), by its statement (``using ‹P›``), or by an ``obtain`` whose
-hand-written ``that`` must match its supplier clause for clause — and is then
-reported although it is needed.  The other way, a token that merely spells the
-name (a same-named variable in outer syntax) counts as a reader, and a binding
-goes unreported.  Over the AFP, 3.1% of 241,176 bindings are reported.
+such as ``1(2)``), by a literal fact spelled otherwise than its statement
+(``‹x = 0›`` for ``"x = (0::nat)"``), or by an ``obtain`` whose hand-written
+``that`` must match its supplier clause for clause — and is then reported
+although it is needed.  The other way, a token that merely spells the name (a
+same-named variable in outer syntax) counts as a reader, and a binding goes
+unreported.  Over the AFP, 2.7% of 301,053 bindings are reported.
 """
 
 from __future__ import annotations
@@ -96,6 +104,19 @@ _THIS_RESETS = frozenset({"from", "with", "assume", "presume", "case", "next"})
 _GOAL_CMDS = frozenset({"have", "hence", "show", "thus", "obtain", "consider"})
 _LABELLED_GOALS = frozenset({"have", "hence", "obtain"})
 _TERMINATORS = frozenset({"by", "done", "sorry", "oops", ".", ".."})
+# Commands whose text names facts, so a cartouche there is a literal fact
+# (`using ‹P›`, `by (rule ‹P›)`) and not a statement.
+_FACT_CMDS = frozenset({"using", "from", "with", "unfolding", "note",
+                        "by", "apply", "apply_end", "proof", "qed"})
+# Commands followed by a proof method.
+_METHOD_CMDS = frozenset({"by", "apply", "apply_end", "proof", "qed"})
+
+
+def _bare(live: str, end: int) -> bool:
+    """Whether the method name ending at *end* is given no argument: the line
+    ends there, or a combinator or bracket follows (`(fact | rule refl)+`)."""
+    rest = live[end:].lstrip()
+    return not rest or rest[0] in ")|;,+?]"
 
 
 @dataclass
@@ -107,6 +128,9 @@ class LocalBinding:
     entry: str
     read: bool = False
     kept: bool = False   # declared into a rule set by one of its attributes
+    # What it states, each proposition whitespace-collapsed: a literal fact
+    # `‹P›` reads the fact whose statement is `P`, whatever its name.
+    stmts: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -115,6 +139,61 @@ class _Tok:
     col: int
     text: str
     inner: bool          # a name inside a term, not outer syntax
+    # A whole delimited term (`"…"` or a cartouche) rides in the stream too,
+    # at its opening delimiter, ahead of the names inside it: its collapsed
+    # text, and whether it is a cartouche — the only spelling of a literal
+    # fact.  None on every other token.
+    term: str | None = None
+    cartouche: bool = False
+
+
+_OPENERS = (("\"", "\""), ("\\<open>", "\\<close>"), ("‹", "›"))
+
+
+def _term_tokens(live: list[str], spans: dict[int, list[tuple[int, int]]],
+                 ln: int) -> list[_Tok]:
+    """The terms that OPEN on line *ln*, each read to its close however many
+    lines it runs.  *spans* are the parser's inner spans (`hi` exclusive); a
+    span at column 0 continuing a term from the line above is no opening."""
+    out: list[_Tok] = []
+    text = live[ln - 1]
+    for lo, hi in spans.get(ln, ()):
+        pair = next((p for p in _OPENERS if text.startswith(p[0], lo)), None)
+        if pair is None or (lo == 0 and _runs_on(live, spans, ln - 1)):
+            continue
+        parts = [text[lo:hi]]
+        k = ln
+        while (not _closed(parts[-1], k == ln) and hi >= len(live[k - 1])
+               and spans.get(k + 1) and spans[k + 1][0][0] == 0):
+            k += 1
+            hi = spans[k][0][1]
+            parts.append(live[k - 1][:hi])
+        body = " ".join(parts).strip()[len(pair[0]):]
+        if body.endswith(pair[1]):
+            body = body[:-len(pair[1])]
+        out.append(_Tok(ln, lo, "\x00", True, " ".join(body.split()),
+                        pair[0] != "\""))
+    return out
+
+
+def _closed(seg: str, opening: bool) -> bool:
+    """Whether a term's segment ends it: it ends with a closing delimiter
+    that is not its own opening one."""
+    seg = seg.rstrip()
+    return any(seg.endswith(c) and not (opening and seg == o)
+               for o, c in _OPENERS)
+
+
+def _runs_on(live: list[str], spans: dict[int, list[tuple[int, int]]],
+             ln: int) -> bool:
+    """Whether a term is still open at the end of line *ln*."""
+    sp = spans.get(ln)
+    if not sp or sp[-1][1] < len(live[ln - 1]):
+        return False
+    lo, hi = sp[-1]
+    seg = live[ln - 1][lo:hi]
+    return bool(seg.strip()) and not _closed(seg, any(
+        seg.startswith(o) for o, _c in _OPENERS))
 
 
 def _body_tokens(sec: TheorySection, entry: Entry) -> list[_Tok]:
@@ -135,7 +214,7 @@ def _body_tokens(sec: TheorySection, entry: Entry) -> list[_Tok]:
             continue
         outer, live = outer_src[ln - 1], live_src[ln - 1]
         start = 0
-        toks: list[_Tok] = []
+        toks = _term_tokens(live_src, sec.inner_spans, ln)
         for m in _TOKEN_RE.finditer(outer, start):
             if not m.group("sym"):
                 toks.append(_Tok(ln, m.start(), m.group(0), False))
@@ -178,6 +257,9 @@ class _Walk:
         default_factory=list)        # bound at the end of this command
     this: list[LocalBinding] = field(default_factory=list)
     unfinished: bool = False         # a `sorry` / `oops` somewhere in it
+    # A goal's proof has ended (`by`, `qed`, `done`, …) but the method after
+    # it is still being read; its labels bind at the next command.
+    proved: bool = False
 
     def read(self, key: tuple[str, str]) -> None:
         for scope in reversed(self.scopes):
@@ -185,6 +267,32 @@ class _Walk:
                 for b in scope[key]:
                     b.read = True
                 return
+
+    def _facts(self):
+        for scope in self.scopes:
+            for (kind, _name), group in scope.items():
+                if kind == "f":
+                    yield from group
+
+    def read_every_fact(self) -> None:
+        """A bare `fact` method: it closes its goal with any fact in the
+        context whose statement matches, so every visible one may be read."""
+        for b in self._facts():
+            b.read = True
+
+    def read_statement(self, text: str) -> None:
+        """A literal fact `‹P›`: whichever visible fact states `P`."""
+        for b in self._facts():
+            if text in b.stmts:
+                b.read = True
+
+    def settle(self) -> None:
+        """The method that closed a goal has been read: bind its labels now,
+        so `by (simp add: a)` in `have a: … by …` cites the OLD `a`."""
+        if self.proved:
+            self.proved = False
+            self.prove()
+            self.close_subgoal()
 
     def read_this(self) -> None:
         for b in self.this:
@@ -272,6 +380,17 @@ def _label_at(toks: list[_Tok], i: int, sep: str
     return None
 
 
+def _stmts_at(toks: list[_Tok], i: int) -> list[str]:
+    """The propositions written from *i* on, up to the next outer token:
+    `"P" "Q"` after a label are both its statements."""
+    out: list[str] = []
+    while i < len(toks) and toks[i].inner:
+        if toks[i].term is not None:
+            out.append(toks[i].term)
+        i += 1
+    return out
+
+
 def scan_proof(sec: TheorySection, entry: Entry,
                ignore: frozenset[tuple[int, int]] = frozenset()
                ) -> list[LocalBinding]:
@@ -326,6 +445,7 @@ def _seed_premises(sec: TheorySection, entry: Entry, w: "_Walk") -> None:
                 seen[base] = b
                 w.bindings.append(b)
                 w.bind(("f", base), [b])
+            b.stmts.append(p.text)
         if b is not None:
             for whole in _PREMISE_KINDS[p.kind]:
                 group = groups.setdefault(whole, [])
@@ -362,6 +482,7 @@ def _walk(sec: TheorySection, entry: Entry,
     walks the same structure for `body_end_line` [body-end-text]; over the AFP
     the two agree on all 297,954 proofs, and a test holds them together."""
     toks = _body_tokens(sec, entry)
+    live_src = sec.live_source()
     if ignore:
         # `(line, col)` of name tokens that do not count as reads: the
         # `-r` premise cascade asks whether a label is read ELSEWHERE.
@@ -389,6 +510,11 @@ def _walk(sec: TheorySection, entry: Entry,
         s = t.text
         if s in ("sorry", "oops") and not t.inner:
             w.unfinished = True
+        if t.term is not None:
+            if t.cartouche and cmd in _FACT_CMDS:
+                w.read_statement(t.term)
+            i += 1
+            continue
         if t.inner:
             if not variables:
                 w.read(("t", s))
@@ -406,6 +532,7 @@ def _walk(sec: TheorySection, entry: Entry,
         if nest == 0 and (s in _COMMANDS or s in ("{", "}", ".", "..")):
             if closing:
                 break
+            w.settle()
             w.finish_command()
             if this_stale:
                 w.this, this_stale = [], False
@@ -423,8 +550,7 @@ def _walk(sec: TheorySection, entry: Entry,
                         w.end, closing = t.line, True
                         i += 1
                         continue
-                    w.prove()
-                    w.close_subgoal()
+                    w.proved = True
             elif s == "next":
                 w.close()
                 w.open("proof")
@@ -433,8 +559,7 @@ def _walk(sec: TheorySection, entry: Entry,
                     w.end, closing = t.line, True
                     i += 1
                     continue
-                w.prove()
-                w.close_subgoal()
+                w.proved = True
             if s in _GOAL_CMDS:
                 w.goals[len(w.scopes)] = []
             cmd = s
@@ -485,7 +610,8 @@ def _walk(sec: TheorySection, entry: Entry,
                 if premises:
                     continue
                 b = LocalBinding(name, cmd, t.line, entry.name,
-                                 kept=bool(attrs - TRANSFORMING_ATTRS))
+                                 kept=bool(attrs - TRANSFORMING_ATTRS),
+                                 stmts=_stmts_at(toks, after))
                 if cmd == "define":
                     # A `where` label is another handle on the definitions.
                     w.pending.append((("f", name), define_group))
@@ -511,6 +637,9 @@ def _walk(sec: TheorySection, entry: Entry,
             continue
         if s == "this":
             w.read_this()
+        elif (s == "fact" and cmd in _METHOD_CMDS
+              and _bare(live_src[t.line - 1], t.col + len(s))):
+            w.read_every_fact()
         elif s.startswith("?"):
             w.read(("t", s))
         elif _is_name(s):

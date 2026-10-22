@@ -156,8 +156,11 @@ proof leaves behind. The statement's own named premises (`assumes NAME:`,
 caller's premise read only to discharge an unread one by `[OF …]` position is
 reported as well, naming the premise it fed. It follows Isar's scoping (a name bound inside `proof … qed`
 or after `next` is invisible outside it) and binding time (`have a: … using a`
-cites the *previous* `a`). A label whose fact is consumed by `then` / `moreover`
-/ `ultimately`, or declared by `[simp]`, is used and never reported.
+cites the *previous* `a`, and so does `by (simp add: a)`). A label whose fact
+is consumed by `then` / `moreover` / `ultimately`, or declared by `[simp]`, is
+used and never reported. So is a fact read by its statement: a bare `fact`
+method (`by fact`) may close its goal with any fact in scope, so it reads them
+all, and a literal fact `‹P›` reads the fact stated as `P`.
 
 ```sh
 query unused --locals Foo.thy:120..260   # the proofs a diff hunk touches
@@ -165,8 +168,9 @@ query unused --locals Foo:bar_lemma      # one proof
 ```
 
 The rows are **candidates, not a delete list**: a fact read through a bundle
-cited under another name, by `case` position (`1(2)`), by its statement
-(`‹P›`), or by an `obtain`'s hand-written `that` is invisible to the scan.
+cited under another name, by `case` position (`1(2)`), by a literal fact
+spelled otherwise than its statement (`‹x = 0›` for `"x = (0::nat)"`), or by an
+`obtain`'s hand-written `that` is invisible to the scan.
 `--keep` names the deliberate ones.
 
 ## Proof-shape metrics

@@ -269,6 +269,75 @@ class Corners(_Root):
         self.assertEqual(self.unread(), [(47, "e", "obtain", "dup_label")])
 
 
+# Facts read by STATEMENT, not name (issue #27) [fact-method].  Hand-read:
+# `by fact` (9) reads the premise `flag_alphabet`; `(fact | …)+` (17) reads
+# `rd'`; `fact u` (25) reads `u` alone, so `v` stays unread; `‹(1::nat) = 1›`
+# (33) reads `p`, whose statement is split over two lines, and not `q`.  A
+# goal's labels bind after its method: line 39's `a` cites line 38's, and
+# `own`'s `by fact` (45) cannot read `own` itself.
+FACTS = r'''theory Facts
+  imports Main
+begin
+
+lemma by_statement:
+  assumes flag_alphabet: "x \<in> {0, 3::nat}"
+  shows "x \<in> {0, 3::nat}"
+proof -
+  have flag_symbol: "x \<in> {0, 3::nat}" by fact
+  show ?thesis using flag_symbol by simp
+qed
+
+lemma combinator: "True"
+proof -
+  have rd': "True" by simp
+  have lap: "True"
+    by (rule TrueI) (fact | rule refl)+
+  show ?thesis using lap by simp
+qed
+
+lemma with_argument: "True"
+proof -
+  have u: "True" by simp
+  have v: "True" by simp
+  show ?thesis by (fact u)
+qed
+
+lemma literal: "True"
+proof -
+  have p: "(1::nat) =
+    1" by simp
+  have q: "(2::nat) = 2" by simp
+  show ?thesis using \<open>(1::nat) = 1\<close> by simp
+qed
+
+lemma method_reads_the_old_label: "True"
+proof -
+  have a: "True" by simp
+  have a: "True" by (simp add: a)
+  show ?thesis using a by simp
+qed
+
+lemma own_fact_method: "True"
+proof -
+  have own: "True" by fact
+  show ?thesis by simp
+qed
+
+end
+'''
+
+
+class ReadByStatement(_Root):
+    THEORIES = {"Facts": FACTS}
+
+    def test_exactly_the_hand_read_rows(self):
+        self.assertEqual(self.unread(), [
+            (24, "v", "have", "with_argument"),
+            (32, "q", "have", "literal"),
+            (45, "own", "have", "own_fact_method"),
+        ])
+
+
 EXTENT = r'''theory Extent
   imports Main
 begin

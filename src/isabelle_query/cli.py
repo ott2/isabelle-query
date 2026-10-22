@@ -1596,11 +1596,13 @@ def _build_parser() -> argparse.ArgumentParser:
                         "PATHs narrow it, as a file, `THY:A..B` / `THY:LINE` "
                         "(the proofs that span touches) or `THY:ENTRY`.  "
                         "CANDIDATES, not a delete list: a fact used through a "
-                        "bundle, by `case` position (`1(2)`), by its statement "
-                        "(`‹P›`) or by an `obtain`'s hand-written `that` is "
-                        "invisible to it; --keep names the deliberate ones.  A label whose fact "
-                        "is chained (`then`, `moreover`, ...) or declared "
-                        "(`[simp]`) is used, and never reported")
+                        "bundle, by `case` position (`1(2)`), by a literal "
+                        "fact spelled otherwise than its statement or by an "
+                        "`obtain`'s hand-written `that` is invisible to it; "
+                        "--keep names the deliberate ones.  A label whose "
+                        "fact is chained (`then`, `moreover`, ...), declared "
+                        "(`[simp]`), in scope of a bare `fact` method or "
+                        "cited as `‹P›` is used, and never reported")
     p.add_argument("files", nargs="*", metavar="PATH",
                    help="with --locals only: the files, theories or "
                         "`THY:A..B` / `THY:ENTRY` selections to scan "
