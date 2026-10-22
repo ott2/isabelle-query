@@ -50,6 +50,8 @@ CASES = [
     ("grep", ["grep", "-c", "zzz"], "zero"),
     ("unused", ["unused", "-c"], "zero"),
     ("unused --locals", ["unused", "--locals", "-c"], "zero"),
+    ("unused facts", ["unused", "facts", "-c"], "zero"),
+    ("unused assumptions", ["unused", "assumptions", "-c"], "zero"),
     # An entry selector names an entry that must exist, like a subject.
     ("unused T:zzz", ["unused", "--locals", "-c", "T:zzz"], "unknown"),
     ("sorry", ["sorry", "-c"], "zero"),

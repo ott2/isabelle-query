@@ -134,11 +134,11 @@ class _Root(unittest.TestCase):
 
     def run_cli(self, *argv):
         """(stdout, exit status) of `unused ARGV`."""
-        ns = cli._build_parser().parse_args(["unused", *argv])
         out, code = io.StringIO(), 0
         with contextlib.redirect_stdout(out), \
                 contextlib.redirect_stderr(io.StringIO()):
             try:
+                ns = cli._parse_argv(["unused", *argv])
                 ns.func(ns)
             except SystemExit as e:
                 code = e.code
@@ -426,6 +426,40 @@ class Spans(_Root):
         out, _ = self.run_cli("--locals")
         self.assertEqual(out.splitlines()[0].split(),
                          ["Spans:7", "a", "have", "spans"])
+
+
+class Views(_Root):
+    """`unused [entries|facts|assumptions]` (issue #27) [unused-views]: the
+    analysis is the positional view, and `--locals` stays as `facts`."""
+    THEORIES = {"Spans": SPANS}
+
+    def test_facts_is_locals(self):
+        self.assertEqual(self.run_cli("facts"), self.run_cli("--locals"))
+        self.assertEqual(self.run_cli("--locals", "facts"),
+                         self.run_cli("--locals"))
+
+    def test_assumptions_is_the_premises(self):
+        out, code = self.run_cli("assumptions", "--spans")
+        self.assertEqual((code, [ln.split()[1:] for ln in out.splitlines()]),
+                         (0, [["p", "assumes", "premise", "premise"]]))
+
+    def test_entries_is_the_default(self):
+        self.assertEqual(self.run_cli("entries", "-c"), self.run_cli("-c"))
+
+    def test_a_view_takes_paths(self):
+        path = str(self.dir / "Spans.thy")
+        out, code = self.run_cli("facts", "-c", f"{path}:premise")
+        self.assertEqual((out, code), ("1\n", 0))
+
+    def test_entries_takes_no_paths(self):
+        self.assertEqual(self.run_cli("entries", "Spans")[1], 2)
+
+    def test_locals_is_not_entries(self):
+        self.assertEqual(self.run_cli("--locals", "entries")[1], 2)
+
+    def test_only_the_first_positional_is_a_view(self):
+        # `facts` second is a PATH, and there is no such theory.
+        self.assertNotEqual(self.run_cli("facts", "facts")[1], 0)
 
 
 EXTENT = r'''theory Extent

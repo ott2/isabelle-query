@@ -923,17 +923,40 @@ def _usage_error(msg: str) -> None:
     sys.exit(2)
 
 
+# `unused`'s views [unused-views]: dead entries over the citation graph, or
+# proof-local names, all of them or only the statement's premises.  A view
+# word is recognised only as the first positional; a theory spelled the same
+# is reached as `facts.thy` or by its path.
+_UNUSED_VIEWS = ("entries", "facts", "assumptions")
+
+
+def _unused_view(ns: argparse.Namespace, files: list[str]) -> str:
+    """The view `unused` was asked for, taking its word off *files*.
+    `--locals` is the 0.x spelling of `facts`."""
+    word = files.pop(0) if files and files[0] in _UNUSED_VIEWS else None
+    if ns.locals:
+        if word == "entries":
+            _usage_error("unused: --locals is the `facts` view, not "
+                         "`entries`")
+        return word or "facts"
+    return word or "entries"
+
+
 def _run_unused(ns: argparse.Namespace) -> None:
     flags = _flags_from_ns(ns)
     files = list(getattr(ns, "files", None) or [])
-    if not ns.locals:
+    view = _unused_view(ns, files)
+    ns.files = files      # without the view word, for `_load_sections`
+    if view == "entries":
         # Entry-level deadness is a question about the whole citation graph,
         # so it scopes with -R and never with a file subset (CONTRIBUTING.md).
         if files:
-            _usage_error("unused: PATH arguments need --locals; entry-level "
-                         "`unused` is corpus-wide, scope it with -R")
+            _usage_error("unused: PATH arguments need a proof-local view "
+                         "(`unused facts PATH`); `unused entries` is "
+                         "corpus-wide, scope it with -R")
         if flags.spans:
-            _usage_error("unused: --spans needs --locals")
+            _usage_error("unused: --spans needs a proof-local view "
+                         "(`unused facts --spans`)")
         sections = _load_sections(ns)
         if flags.keep_file is not None:
             if not Path(flags.keep_file).expanduser().is_file():
@@ -946,14 +969,16 @@ def _run_unused(ns: argparse.Namespace) -> None:
         cmd_unused(sections, flags)
         return
     if flags.roots:
-        _usage_error("unused: --locals does not take --roots")
+        _usage_error(f"unused: the `{view}` view does not take --roots")
+    premises = view == "assumptions"
     if not files:
-        cmd_unused_locals(load_index(), flags)
+        cmd_unused_locals(load_index(), flags, premises_only=premises)
         return
     sections, windows = _locals_selection(files)
     # `-r` follows a dead premise to its callers, which may be anywhere.
     cmd_unused_locals(sections, flags, windows,
-                      load_index() if flags.recursive else None)
+                      load_index() if flags.recursive else None,
+                      premises_only=premises)
 
 
 def _locals_selection(files: list[str]
@@ -1550,11 +1575,24 @@ def _build_parser() -> argparse.ArgumentParser:
                         "multiple ranges are `--`-separated in the output.")
     p.set_defaults(func=_run_lines)
 
-    p = sub.add_parser("unused", help="list entries with zero callers")
+    p = sub.add_parser(
+        "unused",
+        help="dead code, in one of three views: `entries` (default) with "
+             "zero callers; `facts`, the proof-local names a proof never "
+             "reads; `assumptions`, only the statement premises among them",
+        description="Views: `unused [entries]` lists entries nothing cites, "
+                    "over the whole citation graph (scope it with -R).  "
+                    "`unused facts [PATH...]` looks one level down, at the "
+                    "names a proof binds and never reads, including the "
+                    "statement's own `assumes` / `if` labels; "
+                    "`unused assumptions [PATH...]` keeps only those "
+                    "premises, since dropping one is a separate job that "
+                    "touches every caller.  `--locals` is `facts`.")
     _add_count_flag(p)
     p.add_argument("-r", "--recursive", action="store_true",
                    help="cascade: include entries whose callers are all "
-                        "unused.  With --locals: include a caller's `assumes` "
+                        "unused.  In the facts / assumptions views: include "
+                        "a caller's `assumes` "
                         "label read only to discharge an unread premise by "
                         "`[OF ...]` position, tagged with the premise it fed")
     p.add_argument("--by-theory", action="store_true",
@@ -1590,7 +1628,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         "leaving only the entries with none.  (`--implicit` "
                         "is the 0.9.9 spelling.)")
     p.add_argument("--locals", action="store_true",
-                   help="one level down: proof-local names (`have NAME:`, "
+                   help="the `facts` view, under its first name.  "
+                        "One level down: proof-local names (`have NAME:`, "
                         "`obtain ... where NAME:`, `note NAME =`, `define`, "
                         "`let ?NAME`, and the statement's own `assumes "
                         "NAME:` / `if NAME:`) that nothing in their scope "
@@ -1607,7 +1646,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         "(`[simp]`), in scope of a bare `fact` method or "
                         "cited as `‹P›` is used, and never reported")
     p.add_argument("--spans", action="store_true",
-                   help="with --locals only: a column giving the lines that "
+                   help="facts / assumptions views only: a column giving "
+                        "the lines that "
                         "bind each name, `THY:A..B` — its statement (from a "
                         "leading `from`/`with`/`then`) to the end of its "
                         "proof, a method after `qed` included — when deleting "
@@ -1618,9 +1658,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         "`binds-vars` (an `obtain` whose variables may still "
                         "be used), or `premise` alone (a statement premise; "
                         "dropping it changes the statement and its callers)")
-    p.add_argument("files", nargs="*", metavar="PATH",
-                   help="with --locals only: the files, theories or "
-                        "`THY:A..B` / `THY:ENTRY` selections to scan "
+    p.add_argument("files", nargs="*", metavar="[VIEW] PATH",
+                   help="VIEW is `entries` (default), `facts` or "
+                        "`assumptions`, first if given.  PATHs, in the "
+                        "facts / assumptions views only: the files, theories "
+                        "or `THY:A..B` / `THY:ENTRY` selections to scan "
                         "(default: the whole project)")
     _add_drop_names_flag(p)
     _add_reach_flag(p)
@@ -1995,10 +2037,28 @@ def _warn_committed_fallback(sess_infos) -> None:
           f"results.", file=sys.stderr)
 
 
+def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse a command line.  `unused facts -c Foo` is the one shape plain
+    `parse_args` refuses: a view word and its PATHs are one `nargs="*"`
+    positional, and argparse cannot resume it after an option (CPython
+    #14191; `parse_intermixed_args` does not take subparsers).  So the words
+    left over there rejoin the PATH list; anything else left over is still
+    an error [unused-views]."""
+    parser = _build_parser()
+    ns, extra = parser.parse_known_args(argv)
+    if extra:
+        if (getattr(ns, "func", None) is _run_unused
+                and not any(a.startswith("-") for a in extra)):
+            ns.files = list(ns.files or []) + extra
+        else:
+            parser.error(f"unrecognized arguments: {' '.join(extra)}")
+    return ns
+
+
 def main():
     global _ROOT_OVERRIDE
     parser = _build_parser()
-    ns = parser.parse_args()
+    ns = _parse_argv()
     if ns.root:
         # Checked here, before any command runs, because an explicit -R is an
         # assertion by the caller: they said this is a root, so if it is not

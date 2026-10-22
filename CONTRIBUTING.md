@@ -44,11 +44,15 @@ positional decides which one it is.
   `grep`, `largest`, `sorry` (and `find` once it gains PATH/`--theory`
   scope under `[theory-refs]`).
 
-`unused` is both, split by a flag. Entry-level deadness is a question about the
-whole citation graph, so plain `unused` takes no PATH and rejects one (exit 2).
-`unused --locals` asks about names bound *inside* a proof, and a proof's answer
-depends on nothing outside it, so there the trailing PATHs are search-family
-scoping. They are not `_add_path_files_arg`'s, though: besides grep's `A..B`
+`unused` is both, split by its view, the first positional: `unused [entries]`,
+`unused facts`, `unused assumptions` (`--locals` is the older spelling of
+`facts`). Entry-level deadness is a question about the whole citation graph, so
+`unused entries` takes no PATH and rejects one (exit 2). The other two views
+ask about names bound *inside* a proof, and a proof's answer depends on nothing
+outside it, so there the trailing PATHs are search-family scoping. The view is
+an argument rather than a flag because it changes the question, the output, and
+what `-r` and PATH mean; as a flag it read like a filter, and was missed (#27).
+The PATHs are not `_add_path_files_arg`'s, though: besides grep's `A..B`
 window they take a `THY:ENTRY` selector, and both select whole **proofs**,
 because whether a name is read depends on the rest of its proof.
 

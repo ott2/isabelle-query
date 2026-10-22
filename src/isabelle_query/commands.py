@@ -57,7 +57,7 @@ from isabelle_query.graph import (
 from isabelle_query import graph as _graph
 from isabelle_query import sites as _sites
 from isabelle_query.proof_locals import (
-    LocalBinding, premise_cascade, span_text, unread_locals)
+    PREMISE_KINDS, LocalBinding, premise_cascade, span_text, unread_locals)
 from isabelle_query.render import (
     _emit_matches,
     _format_extent,
@@ -2303,8 +2303,8 @@ def _dead_marked(graph: CallGraph, dead: dict[str, int],
 
 def cmd_unused_locals(sections: list[TheorySection], flags: 'CmdFlags',
                       windows: "dict[Path, list] | None" = None,
-                      everywhere: "list[TheorySection] | None" = None
-                      ) -> None:
+                      everywhere: "list[TheorySection] | None" = None,
+                      premises_only: bool = False) -> None:
     """``unused --locals``: proof-local names bound and never read (issue
     #12).  One row per binding — ``LOCUS NAME KIND ENTRY`` — in source order;
     the scan and its caveats are :mod:`isabelle_query.proof_locals`'.
@@ -2313,8 +2313,13 @@ def cmd_unused_locals(sections: list[TheorySection], flags: 'CmdFlags',
     `assumes` label read only to discharge an unread premise by `[OF …]`
     position, with a fifth column naming the premise it fed.  The callers
     are searched for over *everywhere* (the project), not just the
-    selection."""
+    selection.
+
+    *premises_only* is the `assumptions` view [unused-views]: the statement
+    premises alone, the bindings whose removal reaches past the proof."""
     found = unread_locals(sections, windows, flags.keep)
+    if premises_only:
+        found = [(sec, b) for sec, b in found if b.kind in PREMISE_KINDS]
     rows: list[tuple[TheorySection, "LocalBinding", str]] = [
         (sec, b, "") for sec, b in found]
     if flags.recursive:

@@ -467,6 +467,7 @@ def scan_proof(sec: TheorySection, entry: Entry,
 # A statement premise as a binding [unread-assumes]: its kind, and the name
 # that reads every premise of that kind at once.
 _PREMISE_KINDS = {"assumes": ("assms", "prems"), "if": ("that",)}
+PREMISE_KINDS = frozenset(_PREMISE_KINDS)
 
 
 def _seed_premises(sec: TheorySection, entry: Entry, w: "_Walk") -> None:

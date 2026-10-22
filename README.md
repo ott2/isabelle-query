@@ -41,7 +41,7 @@ query refs <theory>        # what a theory cites, by owning theory (citation-lev
 query graph [citation|imports]  # the whole graph as JSON (-f dot for Graphviz)
 query sorry                # outstanding sorry's
 query unused               # dead-code / unused-entry analysis
-query unused --locals [PATH]  # proof-local names (`have x:`, `let ?x`) nothing reads
+query unused facts [PATH]  # proof-local names (`have x:`, `let ?x`) nothing reads
 query instances <name> [-r]  # where a locale/class is instantiated; -r walks the hierarchy
 query codeqs <name>        # declared code-equation sites of a constant
 query shape <view>         # proof-shape metrics (summary|steps|lemma|widest|census)
@@ -148,7 +148,7 @@ name is reported on stderr as stale.
 
 ### Unread proof-local names
 
-`unused --locals` asks `unused`'s question one level down, inside a proof: which
+`unused facts` asks `unused`'s question one level down, inside a proof: which
 `have NAME:`, `obtain … where NAME:`, `note NAME =`, `define NAME` or `let ?NAME`
 binds a name that nothing in its scope reads — the litter a copied-then-trimmed
 proof leaves behind. The statement's own named premises (`assumes NAME:`,
@@ -163,10 +163,16 @@ method (`by fact`) may close its goal with any fact in scope, so it reads them
 all, and a literal fact `‹P›` reads the fact stated as `P`.
 
 ```sh
-query unused --locals Foo.thy:120..260   # the proofs a diff hunk touches
-query unused --locals Foo:bar_lemma      # one proof
-query unused --locals --spans Foo        # ... with the lines that bind each
+query unused facts Foo.thy:120..260   # the proofs a diff hunk touches
+query unused facts Foo:bar_lemma      # one proof
+query unused facts --spans Foo        # ... with the lines that bind each
+query unused assumptions Foo          # only the statements' unread premises
 ```
+
+`unused` has three views: `entries` (the default), `facts` and `assumptions`.
+`assumptions` keeps only the statement premises, because dropping one changes
+the statement and every caller, which is a separate job from tidying a proof.
+`--locals` is the earlier spelling of `facts`.
 
 `--spans` adds the lines that bind each name: `Foo:A..B` runs from its
 statement (or the `from` / `then` leading into it) to the end of its proof,
