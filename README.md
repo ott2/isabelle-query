@@ -160,7 +160,9 @@ cites the *previous* `a`, and so does `by (simp add: a)`). A label whose fact
 is consumed by `then` / `moreover` / `ultimately`, or declared by `[simp]`, is
 used and never reported. So is a fact read by its statement: a bare `fact`
 method (`by fact`) may close its goal with any fact in scope, so it reads them
-all, and a literal fact `‹P›` reads the fact stated as `P`.
+all, and a literal fact `‹P›` reads the fact stated as `P`. A cartouche of
+method text is method text: `use x in ‹simp add: y›` reads `y`, as does an
+Eisbach `match … ⇒ ‹rule y›`.
 
 ```sh
 query unused facts Foo.thy:120..260   # the proofs a diff hunk touches

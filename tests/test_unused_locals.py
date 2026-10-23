@@ -338,6 +338,61 @@ class ReadByStatement(_Root):
         ])
 
 
+# A cartouche of method text cites facts (#30) [method-cartouche]: `read` (7)
+# in `use … in ‹simp add: read›`, `work` (16) where the `use` wraps a line,
+# `f` (24) through a bare `‹fact›`, `h` (30) in an Eisbach `⇒ ‹rule h›`.  A
+# literal fact still reads by statement: `‹True›` (37) reads `lit` (36).
+# Hand-read, only `dead` (9) is unread.
+METHOD_TEXT = r'''theory Methods
+  imports Main
+begin
+
+lemma use_in: "True \<and> True"
+proof -
+  have read: "True" by simp
+  have used: "True" by simp
+  have dead: "True" by simp
+  show ?thesis by (rule conjI) (use used in \<open>simp add: read\<close>)
+qed
+
+lemma wrapped: "True"
+proof -
+  have cursor: "True" by simp
+  have work: "True" by simp
+  show ?thesis
+    by (use cursor in
+        \<open>simp_all add: work [symmetric]\<close>)
+qed
+
+lemma bare_fact: "True"
+proof -
+  have f: "True" by simp
+  show ?thesis by (use TrueI in \<open>fact\<close>)
+qed
+
+lemma eisbach: "True"
+proof -
+  have h: "True" by simp
+  show ?thesis by (match conclusion in "True" \<Rightarrow> \<open>rule h\<close>)
+qed
+
+lemma literal_fact: "True"
+proof -
+  have lit: "True" by simp
+  show ?thesis by (rule \<open>True\<close>)
+qed
+
+end
+'''
+
+
+class ReadInMethodText(_Root):
+    THEORIES = {"Methods": METHOD_TEXT}
+
+    def test_exactly_the_hand_read_rows(self):
+        self.assertEqual(self.unread(), [(9, "dead", "have", "use_in")])
+
+
 # The lines that bind each name (issue #27) [local-spans].  Hand-read, every
 # binding unread (an unlabelled `have` sits before each `moreover` / `then`
 # so that neither reads a labelled fact):

@@ -128,11 +128,31 @@ _CLAUSE_CMDS = frozenset({"have", "hence", "show", "thus", "note", "let"})
 _METHOD_CMDS = frozenset({"by", "apply", "apply_end", "proof", "qed"})
 
 
+# What ends the outer text before a cartouche of method text, within a
+# method [method-cartouche]: `use x in ‹simp add: y›`, and Eisbach's
+# `match conclusion in "P" ⇒ ‹rule H›`.
+_METHOD_TEXT_BEFORE_RE = re.compile(
+    r"(?:(?<![\w'])in|\\<Rightarrow>|⇒|=>)\s*$")
+
+
+def _method_cartouche(outer: list[str], t: _Tok) -> bool:
+    """Whether the cartouche *t* in a method holds method text rather than a
+    literal fact: whether the outer text before it, on its line or the line
+    above, ends in `in` or `⇒`."""
+    ln, before = t.line, outer[t.line - 1][:t.col]
+    while not before.strip() and ln > 1:
+        ln -= 1
+        before = outer[ln - 1]
+    return bool(_METHOD_TEXT_BEFORE_RE.search(before))
+
+
 def _bare(live: str, end: int) -> bool:
     """Whether the method name ending at *end* is given no argument: the line
-    ends there, or a combinator or bracket follows (`(fact | rule refl)+`)."""
+    ends there, or a combinator or bracket follows (`(fact | rule refl)+`),
+    or the cartouche of method text it is written in closes (`‹fact›`)."""
     rest = live[end:].lstrip()
-    return not rest or rest[0] in ")|;,+?]"
+    return (not rest or rest[0] in ")|;,+?]›"
+            or rest.startswith("\\<close>"))
 
 
 @dataclass
@@ -564,20 +584,37 @@ def _walk(sec: TheorySection, entry: Entry,
     # `from this` is still the previous fact.
     this_stale = False
     begun = False         # past the statement: a command has been read
+    # In a cartouche of method text (`use x in ‹simp add: y›`): its names
+    # cite facts as method text does, and are read as terms too, since a
+    # read only ever removes a candidate [method-cartouche].
+    method_text = False
     i = 0
     while i < len(toks):
         t = toks[i]
         s = t.text
+        if not t.inner:
+            method_text = False
         if s in ("sorry", "oops") and not t.inner:
             w.unfinished = True
         if t.term is not None:
-            if t.cartouche and cmd in _FACT_CMDS:
+            if (t.cartouche and cmd in _METHOD_CMDS
+                    and _method_cartouche(outer_src, t)):
+                method_text = True
+            elif t.cartouche and cmd in _FACT_CMDS:
                 w.read_statement(t.term)
             i += 1
             continue
         if t.inner:
             if not variables:
                 w.read(("t", s))
+            if method_text:
+                if s == "this":
+                    w.read_this()
+                elif s == "fact" and _bare(live_src[t.line - 1],
+                                           t.col + len(s)):
+                    w.read_every_fact()
+                elif not s.startswith("?"):
+                    w.read(("f", _unqualified(s)))
             i += 1
             continue
         if s in "([":
