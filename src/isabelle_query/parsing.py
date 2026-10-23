@@ -27,7 +27,7 @@ live where the tests reach it.
 from __future__ import annotations
 
 import re
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
@@ -3284,6 +3284,7 @@ def _parse_one(thy: str, thy_path: Path,
         if o.tag != "NOTEPAD":
             o.body_end_line = _proof_extent(sec_for_extent, o.proof_line,
                                             o.thy_end, outer_live, prose_body)
+    _mark_preambles_under_headings(entries, owners, heading_spans)
     sec = TheorySection(thy, thy_path, entries, thy_lines=len(lines),
                         outline=outline, text_blocks=text_blocks,
                         heading_spans=heading_spans,
@@ -3310,6 +3311,42 @@ def _mark_shared_lines(entries: list[Entry]) -> None:
     for a, b in zip(placed, placed[1:]):
         if a._line_cut()[1] >= b.src_start:
             a.shares_line = b.shares_line = True
+
+
+def _mark_preambles_under_headings(entries: list[Entry], owners: list[Entry],
+                                   heading_spans: list[tuple[int, int]]
+                                   ) -> None:
+    """Flag each preamble with a heading above it and no entry between
+    [preamble-heading] (#28).
+
+    Such a `text` may document the entry, or introduce the whole section, and
+    the source does not say which.  8,847 of the AFP's 32,002 preambles are
+    flagged, 6,445 of them with only blank lines between
+    (`scripts/probe_midline_decls.py`).  `cut_span` keeps the preamble, so a tool that
+    moves or deletes the entry can read this and ask rather than guess.
+
+    "Between" means any line of another entry or proof owner, from its
+    `src_start` to its body's end.  So a heading inside the previous entry's
+    proof does not count, and nor does one with an `instance` proof after
+    it."""
+    heads = sorted(end for _start, end in heading_spans)
+    if not heads:
+        return
+    spans = sorted((x.src_start, max(x.body_end_line, x.thy_line))
+                   for x in [*entries, *owners] if x.thy_line)
+    starts = [a for a, _b in spans]
+    reach = []                      # the furthest line spans[:k+1] reach
+    for _a, b in spans:
+        reach.append(max(b, reach[-1]) if reach else b)
+    for e in entries:
+        if not e.preamble:
+            continue
+        top = e.preamble[0]
+        k = bisect_left(heads, top) - 1
+        if k < 0:
+            continue
+        j = bisect_left(starts, top) - 1
+        e.preamble_follows_heading = j < 0 or reach[j] < heads[k]
 
 
 def _parse_plain(thy: str, path: Path,

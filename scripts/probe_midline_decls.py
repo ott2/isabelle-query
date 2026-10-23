@@ -12,7 +12,8 @@ line.
 **#28: preambles under a heading.**  A `text` block attached as an entry's
 preamble, with nothing between the nearest heading above and the block
 except blank lines.  Such a block may introduce the section rather than
-document the entry.
+document the entry.  Also counts `Entry.preamble_follows_heading`, which
+allows other text and commands, but no entry or proof, in between.
 
     python scripts/probe_midline_decls.py [ROOT] [--limit=N] [--show=N]
         [--boundaries]
@@ -57,7 +58,7 @@ def main() -> int:
         rf"(?!{parsing._NAME_GOES_ON})")
     mid: Counter[str] = Counter()
     examples: dict[str, list[str]] = defaultdict(list)
-    preambles = under_heading = 0
+    preambles = under_heading = flagged = 0
     pre_examples: list[str] = []
     for session in sessions:
         try:
@@ -92,6 +93,7 @@ def main() -> int:
                 if not e.preamble:
                     continue
                 preambles += 1
+                flagged += bool(getattr(e, "preamble_follows_heading", False))
                 k = e.preamble[0] - 1
                 while k >= 1 and not lines[k - 1].strip():
                     k -= 1
@@ -107,7 +109,7 @@ def main() -> int:
         for ex in examples[key]:
             print(f"            {ex}")
     print(f"#28 preambles: {preambles:,}; directly under a heading: "
-          f"{under_heading:,}")
+          f"{under_heading:,}; `preamble_follows_heading`: {flagged:,}")
     for ex in pre_examples:
         print(f"    {ex}")
     return 0

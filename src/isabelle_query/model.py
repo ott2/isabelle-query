@@ -100,6 +100,12 @@ class Entry:
     preamble: tuple[int, int] | None = None
         # (start, end) of the `text \<open>...\<close>` block immediately
         # preceding this entry, if one exists within ~3 blank lines.
+    preamble_follows_heading: bool = False
+        # A heading lies above the preamble with no other entry or proof in
+        # between, so the `text` may introduce the section rather than
+        # document this entry.  `cut_span` still starts at the preamble; a
+        # tool that moves or deletes the entry should ask here, not guess.
+        # Set by `_mark_preambles_under_headings` [preamble-heading].
     annotations: list[tuple[int, str, str]] = field(default_factory=list)
         # (line_no, content, kind) for every `\<comment> \<open>...\<close>`
         # marginal note inside this entry's span [thy_line .. thy_end], tagged

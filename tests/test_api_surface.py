@@ -47,6 +47,7 @@ ENTRY_SPAN_FIELDS = [
     "body_end_line",   # last line of the proof body
     "thy_end",         # last line of the entry's span
     "preamble",        # (start, end) of the leading `text` block, or None
+    "preamble_follows_heading",  # it may introduce the section instead
     "shares_line",     # another entry's lines meet this one's: no cut_span
 ]
 # Derived, not stored — `src_start` is the preamble start when there is one and

@@ -282,7 +282,9 @@ under `DIR` but parses only the one theory.
 A tool that **edits** by entry should cut `e.cut_span`: the preamble through
 the end of the proof, never reaching the next entry. It is `None` when no line
 span can promise that — two declarations sharing a line — and a caller should
-refuse there rather than widen it.
+refuse there rather than widen it. When `e.preamble_follows_heading` is set,
+the preamble sits directly under a heading and may introduce the section
+rather than the entry: ask before moving it.
 
 ## Installation
 
