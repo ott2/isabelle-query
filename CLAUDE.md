@@ -115,7 +115,7 @@ matter every session:
 
 ## Release status
 
-The released version tracks `pyproject.toml` (currently **1.1.0**). From 1.0.0
+The released version tracks `pyproject.toml` (currently **1.1.1**). From 1.0.0
 versioning is **SemVer proper**: a breaking change to the CLI contract or the
 `api` surface takes the **major** slot, an addition the minor, a fix the patch.
 Before 1.0.0 it was alpha: from 0.7.0 a breaking change took the minor slot,
