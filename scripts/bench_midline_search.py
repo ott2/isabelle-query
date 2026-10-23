@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare ways to find mid-line declaring keywords [midline-decl].
 
-`parsing._mid_decls` is the bare-alternation variant.  All variants run on
+`parsing._mid_decls` uses the prefix-factored alternation (`trie_only`).  All variants run on
 the same outer views in one process, so a busy machine slows them alike;
 compare the ratios, not the seconds.
 
@@ -76,14 +76,28 @@ def by_bytes(texts):
     return n
 
 
+def join_only(texts):
+    return sum(len("\n".join(o)) for o, _t in texts)
+
+
+def finditer_only(texts):
+    return sum(sum(1 for _ in BARE_RE.finditer(t)) for _o, t in texts)
+
+
+TRIE_RE = parsing._DECL_WORD_RE      # factored by prefix
+
+
+def trie_only(texts):
+    return sum(sum(1 for _ in TRIE_RE.finditer(t)) for _o, t in texts)
+
+
 def main() -> int:
     texts = []
     for arg in sys.argv[1:]:
         p = Path(arg)
         o = parsing._parse_one(p.stem, p).outer_source()
         texts.append((o, "\n".join(o)))
-    for fn in (by_mid_decls, by_bytes, by_bare_regex, by_bytes_bare,
-               by_bytes_lead):
+    for fn in (by_mid_decls, join_only, finditer_only, trie_only):
         t0 = time.perf_counter()
         n = fn(texts)
         print(f"{fn.__name__:14} {time.perf_counter() - t0:.3f}s  {n} hits")

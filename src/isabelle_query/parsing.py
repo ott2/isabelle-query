@@ -2607,7 +2607,24 @@ _LEADING_CMD_RE = re.compile(rf"^([A-Za-z][A-Za-z_0-9]*+)(?!{_NAME_GOES_ON})")
 # table is a union over the whole root, where a command of one entry can be
 # a plain name in another.  Searched for in the outer view, so a keyword in a
 # term or a comment is already blank.
-_DECL_WORD_RE = re.compile(_DECL_WORDS)
+
+
+def _prefix_trie(words: list[str]) -> str:
+    """A regex matching *words*, factored by shared prefix: `sre` tries an
+    alternation's branches one by one, and a factored one about once per
+    column.  Longest first where one word extends another (`lemmas`)."""
+    groups: dict[str, list[str]] = {}
+    for w in words:
+        groups.setdefault(w[:1], []).append(w[1:])
+    alts = [re.escape(h) + _prefix_trie(t)
+            for h, t in sorted(groups.items()) if h]
+    if not alts:
+        return ""
+    body = alts[0] if len(alts) == 1 else "(?:" + "|".join(alts) + ")"
+    return f"(?:{body})?" if "" in groups else body
+
+
+_DECL_WORD_RE = re.compile(_prefix_trie(_DECL_WORDS.split("|")))
 _TOKEN_BEFORE = frozenset(" \t)]}")
 _MODIFIER_BEFORE_RE = re.compile(r"(?:private|qualified)\s+$")
 
@@ -2888,11 +2905,13 @@ def _mid_decls(outer: list[str]) -> list[tuple[int, int]]:
     after the first token of its line [midline-decl], at its `private` /
     `qualified` modifier if it has one.
 
-    A bare alternation, with the token test in Python on its hits: one
-    pass, whose start-character prefilter skips most columns.  A lookbehind
-    ahead of the alternation defeats that filter, and in a view that blanks
-    terms to spaces it then tries every keyword at nearly every column; that
-    cost a third of the whole parse on the AFP's largest theories."""
+    One regex pass with the token test in Python on its hits.  The pattern
+    is the keywords alone, factored by prefix, so its start-character
+    prefilter skips most columns.  A lookbehind ahead of it defeats that
+    filter, and in a view that blanks terms to spaces it then tries every
+    keyword at nearly every column; that cost a third of the whole parse on
+    the AFP's largest theories.  This pass still costs about 6% of a
+    whole-AFP `summary` (`scripts/probe_summary_parts.py`)."""
     text = "\n".join(outer)
     hits: list[int] = []
     for m in _DECL_WORD_RE.finditer(text):
