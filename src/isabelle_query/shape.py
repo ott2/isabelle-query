@@ -75,8 +75,8 @@ from typing import NamedTuple
 from isabelle_query import graph
 from isabelle_query.model import Entry, TheorySection
 from isabelle_query.parsing import (
-    ISA_SYMBOL, ISA_WORD_CHAR, LETTER_SYMS, PROOF_RE, _PROOF_INLINE_RE,
-    _balanced_end)
+    ISA_SYMBOL, ISA_WORD_CHAR, LETTER_SYMS, PROOF_COMMANDS, PROOF_RE,
+    _PROOF_INLINE_RE, _balanced_end)
 from isabelle_query.graph import (
     CLOSING_KEYWORDS as _CLOSING_KEYWORDS,
     CONTEXT_KEYWORDS as _CONTEXT_KEYWORDS,
@@ -124,19 +124,10 @@ _CALC_WORDS = frozenset({"also", "finally"})
 _STEP_GOAL_KEYWORDS = _GOAL_KEYWORDS - _CALC_WORDS
 _STEP_PLUMBING_KEYWORDS = _PLUMBING_KEYWORDS | _CALC_WORDS
 
-# Isabelle's proof-mode commands: every keyword Pure declares with a proof
-# kind (`prf_*`, `qed*`, `next_block`, Pure.thy:33-83; HOL adds none).  One
-# command ends where the next begins, so these are where a line splits into
-# steps [step-command].
-_PROOF_COMMANDS = frozenset({
-    "have", "hence", "show", "thus", "obtain", "consider", "interpret",
-    "then", "from", "with", "note", "supply", "using", "unfolding",
-    "include", "including", "fix", "assume", "presume", "define", "let",
-    "write", "case", "also", "moreover", "finally", "ultimately",
-    "{", "}", "next", "proof", "qed", "by", "..", ".", "sorry",
-    "\\<proof>", "done", "oops", "apply", "apply_end", "defer", "prefer",
-    "back", "subgoal",
-})
+# Isabelle's proof-mode commands (`parsing.PROOF_COMMANDS`).  One command
+# ends where the next begins, so these are where a line splits into steps
+# [step-command].
+_PROOF_COMMANDS = PROOF_COMMANDS
 # An outer-syntax token, as far as finding commands needs: a (possibly
 # qualified) name, so `1.prems` and `Foo.bar` are one token and only a
 # free-standing `.` / `..` is the command; a bracket; or a dot terminator.

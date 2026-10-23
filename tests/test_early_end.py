@@ -52,5 +52,53 @@ class AQualifiedNameIsNoCommand(unittest.TestCase):
         self.assertIsNone(m("context.safe_unfolds"))
 
 
+class AHeadingInsideAProof(unittest.TestCase):
+    """A heading is legal in proof mode, and must not end the entry
+    (Hales_Jewett:1196 lost 717 lines of `hj_imp_lhj_step` that way)."""
+
+    THY = ('theory T imports Main begin\n'                 # 1
+           'lemma t: "True \\<and> True"\n'                 # 2
+           'proof\n'                                       # 3
+           '  show "True" by simp\n'                       # 4
+           '  paragraph \\<open>The second half\\<close>\n'  # 5
+           '  text \\<open>Prose, then a diagnostic.\\<close>\n'  # 6
+           '  thm conjI\n'                                 # 7
+           '  show "True" by simp\n'                       # 8
+           'qed\n'                                         # 9
+           '\n'                                            # 10
+           'section \\<open>Next\\<close>\n'                # 11
+           '\n'                                            # 12
+           'lemma u: "True" by simp\n'                     # 13
+           '\n'                                            # 14
+           'lemma v: "True"\n'                             # 15
+           'proof -\n'                                     # 16
+           '  paragraph \\<open>Never closed\\<close>\n'    # 17
+           '  show ?thesis by simp\n'                      # 18
+           '\n'                                            # 19
+           'lemma w: "True" by simp\n'                     # 20
+           'end\n')
+
+    def test_the_entry_runs_on_to_its_next_boundary(self):
+        # Past the heading on 5 to the one on 11, as any entry ends; its
+        # body ends where the proof does.
+        e = entry(self.THY, "t")
+        self.assertEqual((e.thy_end, e.body_end_line), (10, 9))
+
+    def test_a_heading_between_entries_still_ends_one(self):
+        self.assertEqual(entry(self.THY, "u").thy_line, 13)
+        self.assertEqual(
+            [s[2] for s in section_from(self.THY, "T").outline], [5, 11, 17])
+
+    def test_a_proof_never_seen_to_close_keeps_its_end(self):
+        # No `qed` before the next entry: the walk cannot say where `v`
+        # ends, so the heading still ends it, rather than a guess.
+        self.assertEqual(entry(self.THY, "v").thy_end, 16)
+
+    def test_the_gate(self):
+        outer = section_from(self.THY, "T").outer_source()
+        self.assertTrue(parsing._proof_follows(outer, 5, 9))
+        self.assertFalse(parsing._proof_follows(outer, 11, 14))
+
+
 if __name__ == "__main__":
     unittest.main()

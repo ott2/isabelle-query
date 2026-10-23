@@ -2762,6 +2762,107 @@ def _attach_targets(entries: list[Entry], outer: list[str],
                 e.in_target = mt.group(1)
 
 
+# Isabelle's proof-mode commands: every keyword Pure declares with a proof
+# kind (`prf_*`, `qed*`, `next_block`, Pure.thy:33-83; HOL adds none).
+# `shape` splits a line into steps at them [step-command]; here the first
+# command after a heading being one of them says the heading is inside a
+# proof [early-end].
+PROOF_COMMANDS = frozenset({
+    "have", "hence", "show", "thus", "obtain", "consider", "interpret",
+    "then", "from", "with", "note", "supply", "using", "unfolding",
+    "include", "including", "fix", "assume", "presume", "define", "let",
+    "write", "case", "also", "moreover", "finally", "ultimately",
+    "{", "}", "next", "proof", "qed", "by", "..", ".", "sorry",
+    "\\<proof>", "done", "oops", "apply", "apply_end", "defer", "prefer",
+    "back", "subgoal",
+})
+# Commands legal in a proof AND between declarations, so they tell nothing
+# about which one a heading sits in: the document commands, and every keyword
+# Pure and HOL declare `:: diag` (Isabelle2025-2, extracted from their
+# `keywords` sections).
+_EITHER_MODE = frozenset({
+    "text", "txt", "text_raw", "chapter", "section", "subsection",
+    "subsubsection", "paragraph", "subparagraph",
+    "ML_command", "ML_val", "class_deps", "compile_generated_files",
+    "export_generated_files", "find_consts", "find_theorems",
+    "find_unused_assms", "full_prf", "help", "locale_deps", "nitpick",
+    "nunchaku", "prf", "print_ML_antiquotations", "print_abbrevs",
+    "print_antiquotations", "print_attributes", "print_bnfs",
+    "print_bundles", "print_case_translations", "print_cases",
+    "print_claset", "print_classes", "print_codesetup", "print_coercions",
+    "print_commands", "print_context", "print_context_tracing",
+    "print_definitions", "print_defn_rules", "print_facts",
+    "print_induct_rules", "print_inductives", "print_interps",
+    "print_locale", "print_locales", "print_methods", "print_options",
+    "print_orders", "print_quot_maps", "print_quotconsts",
+    "print_quotients", "print_quotientsQ3", "print_quotmapsQ3",
+    "print_record", "print_rules", "print_simpset", "print_state",
+    "print_statement", "print_syntax", "print_term_bindings",
+    "print_theorems", "print_theory", "print_trans_rules", "prop",
+    "quickcheck", "scala_build_generated_files", "sledgehammer",
+    "smt_status", "solve_direct", "term", "thm", "thm_deps", "thm_oracles",
+    "thy_deps", "try", "try0", "typ", "unused_thms", "value", "values",
+    "welcome",
+})
+# A command word, as the first token of an outer line: `proof(induct x)` is
+# `proof`.
+_FIRST_WORD_RE = re.compile(r"[A-Za-z][A-Za-z_0-9']*|\\<proof>|\.\.?|[{}]")
+
+
+def _proof_follows(outer: list[str], heading: int, limit: int) -> bool:
+    """Whether the first command after the heading on line *heading* that
+    tells the two modes apart is a proof command [early-end].  Between
+    declarations a heading is followed by a declaration; inside a proof, by
+    a proof command.  *outer* blanks the heading's title and every document
+    body, so their lines are skipped as blank."""
+    for ln in range(heading + 1, min(limit, len(outer)) + 1):
+        m = _FIRST_WORD_RE.match(outer[ln - 1].lstrip())
+        if m and m.group(0) not in _EITHER_MODE:
+            return m.group(0) in PROOF_COMMANDS
+    return False
+
+
+def _extend_past_headings(entries: list[Entry], lines: list[str],
+                          outer: list[str], headings: set[int],
+                          starts: list[int], stops: list[int]) -> None:
+    """Run an entry on past a heading inside its proof [early-end].
+
+    A heading is legal in proof mode, but `compute_spans` ends an entry at
+    the next heading, so a proof with one in its middle lost the rest
+    (Hales_Jewett:1196, 717 lines).  Walking every proof that a heading
+    bounds to see whether it has closed would cost 8% of all proof lines,
+    so one cheap test comes first: `_proof_follows`, the first command
+    after the heading.  Only then does the structure walk
+    (`_proof_close_line`, which `[body-end-text]` uses for the same
+    question) decide, and the entry is extended only where the walk SEES
+    the proof close beyond the heading and before the next entry.  Where it
+    cannot, nothing changes.
+
+    *starts* are the sorted first lines of entries (the next entry bounds
+    the walk); *stops* every sorted boundary, which the extended entry runs
+    up to, past where its proof closes."""
+    n = len(lines)
+    for e in entries:
+        if not e.proof_line or not e.thy_line or e.thy_end >= n:
+            continue
+        b = e.thy_end + 1
+        while b <= n and not lines[b - 1].strip():
+            b += 1
+        if b not in headings:
+            continue
+        k = bisect_right(starts, e.thy_line)
+        nxt = starts[k] - 1 if k < len(starts) else n
+        if b > nxt or not _proof_follows(outer, b, nxt):
+            continue
+        if _proof_close_line(outer, e.proof_line, e.thy_end):
+            continue
+        close = _proof_close_line(outer, e.proof_line, nxt)
+        if close <= e.thy_end:
+            continue
+        k = bisect_right(stops, close)
+        e.thy_end = min(stops[k] - 1 if k < len(stops) else n, nxt)
+
+
 def compute_spans(entries: list[Entry], section_lines: list[int],
                   total_lines: int) -> None:
     """Set thy_end on each entry to the line before the next entry-or-section.
@@ -3002,11 +3103,17 @@ def _parse_one(thy: str, thy_path: Path,
     # uses as the boundary so a leading doc is charged to the entry it
     # documents (not the preceding one).  Roadmaps need the resulting thy_end.
     _attach_preambles(entries, lines, text_blocks)
-    compute_spans(entries,
-                  [s[2] for s in outline]
-                  + _structural_command_lines(
-                      lines, comment_ranges + nonisar_ranges, outer),
-                  len(lines))
+    heading_lines = [s[2] for s in outline]
+    structural = _structural_command_lines(
+        lines, comment_ranges + nonisar_ranges, outer)
+    compute_spans(entries, heading_lines + structural, len(lines))
+    # Terms AND comments blanked: block structure must not see a `qed` in a
+    # comment or a `.` in a term.
+    outer_live = blank_all(outer, nonisar_spans)
+    starts = sorted(e.src_start for e in entries if e.thy_line > 0)
+    stops = sorted(set(starts) | set(heading_lines) | set(structural))
+    _extend_past_headings(entries, lines, outer_live, set(heading_lines),
+                          starts, stops)
     _attach_annotations(entries, comment_lines)
     for e in entries:
         e.theory = thy
@@ -3020,9 +3127,6 @@ def _parse_one(thy: str, thy_path: Path,
     # would silently answer as if the theory had no comments at all.
     sec_for_extent = TheorySection(thy, thy_path, entries, thy_lines=len(lines),
                                    nonisar_ranges=nonisar_ranges)
-    # Terms AND comments blanked: the block structure `_proof_extent` reads
-    # must not see a `qed` in a comment or a `.` in a term.
-    outer_live = blank_all(outer, nonisar_spans)
     prose_body = _line_mask(len(lines), [(lo + 1, hi) for lo, hi in text_blocks
                                          if hi > lo])
     sec_for_extent._source_cache = lines
@@ -3035,10 +3139,12 @@ def _parse_one(thy: str, thy_path: Path,
     _mark_shared_lines(entries)
     owners = extract_proof_owners(
         lines, outer_live,
-        [e.src_start for e in entries]
-        + [s[2] for s in outline]
-        + _structural_command_lines(lines, comment_ranges + nonisar_ranges,
-                                    outer))
+        [e.src_start for e in entries] + heading_lines + structural)
+    owner_starts = sorted(set(starts) | {o.thy_line for o in owners})
+    # Not a `notepad`: it runs to its `end`, and has no goal to close.
+    _extend_past_headings([o for o in owners if o.tag != "NOTEPAD"], lines,
+                          outer_live, set(heading_lines), owner_starts,
+                          sorted(set(stops) | set(owner_starts)))
     for o in owners:
         o.theory = thy
         if o.tag != "NOTEPAD":

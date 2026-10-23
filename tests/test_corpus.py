@@ -124,6 +124,37 @@ class Corpus(unittest.TestCase):
             f"{len(over)} entries whose body runs past their own span "
             f"(ceiling {_MAX_SPAN_OVERLAP}); first few: {over[:5]}")
 
+    def test_proofs_end_inside_their_entries(self):
+        # [early-end]: an entry must not end while its proof runs on.  Two
+        # causes are fixed — a boundary word as a name's prefix, a heading
+        # inside a proof — and both rest on assumptions a growing corpus can
+        # break: Isar's lexical rule, and the gate that a heading in a proof
+        # is followed by a proof command.  This fails naming the entry when
+        # one does.  A proof the structure walk cannot follow (`wlog`, ...)
+        # is not counted: its end is unknown, not wrong.
+        from isabelle_query.parsing import _proof_close_line
+        cut = []
+        for p in self.files:
+            try:
+                sec = cli._parse_one(Path(p).stem, Path(p))
+            except Exception:  # noqa: BLE001 — a corpus has unparseable files
+                continue
+            outer = sec.outer_source()
+            starts = sorted(e.src_start for e in sec.entries if e.thy_line)
+            for e in sec.entries:
+                if not e.proof_line or not e.thy_line:
+                    continue
+                nxt = next((s - 1 for s in starts if s > e.thy_line),
+                           len(outer))
+                if e.thy_end >= nxt or _proof_close_line(
+                        outer, e.proof_line, e.thy_end):
+                    continue
+                close = _proof_close_line(outer, e.proof_line, nxt)
+                if close > e.thy_end:
+                    cut.append(f"{p}:{e.thy_line} {e.name} ends "
+                               f"{e.thy_end}, proof closes {close}")
+        self.assertEqual(cut, [])
+
     def test_no_locale_prefix_leaks(self):
         # the `(in locale)` qualifier must never end up *in* the parsed name.
         # (A double-quoted name may legitimately start with '(', e.g.
