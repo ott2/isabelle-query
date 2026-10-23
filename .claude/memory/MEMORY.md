@@ -18,7 +18,7 @@
 - [Prefer head over sed](prefer-head-over-sed.md) — view file lines with `head -N` (sed is permission-gated); better, use the Read tool
 - [Prefer scripts over inline python](prefer-scripts-over-inline-python.md) — write a script file (scripts/ for probes) instead of piping `python3 -c` to bash; keep them, they're reusable
 - [Reuse query's parser for tooling](reuse-query-parser-for-tooling.md) — corpus/tooling scans reuse `cli._parse_one` + width primitives, don't roll a mini-parser
-- [AFP checkout location](afp-checkout-location.md) — `~/repos/afp` (Isabelle2025-2), thys/ ~962 entries; the width census corpus
+- [AFP checkout location](afp-checkout-location.md) — `~/repos/afp` pinned at hg tag Isabelle2025-2 (never update it); `~/repos/afp-dev` is the current AFP
 - [Memory tracked in repo](memory-tracked-in-repo.md) — query's memory dir is in-repo at .claude/memory (symlinked from system path), version-controlled; commit changes
 - [Namespace extractor misses induction](namespace-extractor-misses-induction.md) — `induction` registers via the Induct.gen_induct_setup factory not Method.setup; extractor now matches it (fixed at root); regen from the 2025-2 bundle symlink, not ~/repos/isabelle (HEAD)
 - [isabelle export triggers a build](isabelle-export-builds.md) — it is NOT read-only; read the session .db (`isabelle_exports`, Zstd) read-only with sqlite instead

@@ -277,6 +277,38 @@ in `CONTRIBUTING.md`.
         `unused facts --spans` says `unclosed` there; that is by design
         [early-end], and `scripts/probe_early_end.py` lists them.
 
+- [ ] `[preamble-choice]` Let a tool choose how to treat a preamble, not
+      only learn that the choice is ambiguous (#28 follow-up).
+      `Entry.preamble_follows_heading` is the ambiguity signal; the choice
+      itself is missing, so a tool that decides "this `text` introduces the
+      section" must clip `cut_span` by hand, which is the clipping
+      `cut_span` exists to own.  Wanted: an easy switch between the two
+      readings, for instance a cut span that starts at `thy_line`, still
+      `None` under `shares_line`.  The flag plus the switch should cover
+      most cases.  Extent at AFP tag Isabelle2025-2: 8,847 of 32,002
+      preambles flagged, 6,445 of them with only blank lines between the
+      heading and the `text` (`scripts/probe_midline_decls.py`).
+
+- [ ] `[midline-decl]` What the mid-line declaration fix (#29) leaves.
+      Extent at AFP tag Isabelle2025-2 unless stated:
+      - Block structure is per line: an entry's `blocks` is the stack at
+        the start of its line, so in `locale zz begin definition "z = ()"`
+        the definition is not seen inside `zz`.  Two lines
+        (`Isabelle_C/C11-FrontEnd/examples/C2.thy:549`, `C3.thy:524`).
+        This predates #29, which only made such definitions entries.
+      - Custom commands are not recognised mid-line, by design: their
+        table is a union over the whole root, where a command of one entry
+        can be a plain name in another.  Not measured.
+      - When the text ahead of a mid-line declaration opens a command that
+        `_OTHER_COMMANDS` does not list (`hide_const ... lemma x`), the
+        entry before is also flagged and loses its cut span unnecessarily,
+        never gaining a wrong one.  No AFP case.
+      - Cost: the search is one regex pass per theory, about 6% of a
+        whole-AFP `summary` (7.4% before `_prefix_trie`, at load
+        average 2.7).  Re-measure on a quiet machine with
+        `scripts/probe_summary_parts.py`; a cheaper search would have to
+        ride on an existing pass rather than scan the text again.
+
 ## Done
 
 Nothing — by design. Completed work is recorded in its commit messages, which
