@@ -259,6 +259,24 @@ in `CONTRIBUTING.md`.
       but over a different node set (files, not entries).  Record the
       need; don't build until the scope call is made.
 
+- [ ] `[shape-residue]` Known approximations left after 1.1.0, each
+      measured over the AFP and none yet worth its fix:
+      - `proof_tokens` counts raw tokens per line, so a glued `\<close>by`
+        moves when a line is re-wrapped: 13 of ~42k records under
+        `scripts/probe_layout_invariance.py`.
+      - 320 goals whose statement is not found (`bare = "unfound"`),
+        mostly Sledgehammer-style `obtain x :: "..."` whose quoted type
+        runs over several lines (`scripts/probe_unfound_residue.py`).
+      - A multi-label goal (`have a: "P" and b: "Q"`) records only its
+        first label in `Step.label`.
+      - `ASC_LB:asc_fault_domain_props`: a glued `"..."using` is missed by
+        the parser's inline-proof rule.
+      - 8 proofs the structure walk (`parsing._proof_close_line`) cannot
+        follow: a session's own proof command (`wlog`), `thm` / `term`
+        lines, `apply` followed by `proof`.  Their end is unknown, so
+        `unused facts --spans` says `unclosed` there; that is by design
+        [early-end], and `scripts/probe_early_end.py` lists them.
+
 ## Done
 
 Nothing — by design. Completed work is recorded in its commit messages, which
