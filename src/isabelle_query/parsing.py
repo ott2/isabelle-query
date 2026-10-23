@@ -43,9 +43,11 @@ from isabelle_query.model import _GOAL_TAGS, Entry, TheorySection, blank_all
 # ALONE on its line — the "name on a following line" form — still matches.
 # It stays a whole-word test (`definitions`/`inductively` do not match), and
 # being zero-width it leaves the `line[len(keyword):]` slicing untouched.
-DECL_RE = re.compile(
-    r"^(definition|abbreviation|function|fun|primrec|inductive_set|inductive|lemmas|theorems|lemma|corollary|proposition|theorem|schematic_goal|axiomatization|datatype|type_synonym|record|locale|class)(?=\s|$)"
-)
+_DECL_WORDS = (r"definition|abbreviation|function|fun|primrec|inductive_set"
+               r"|inductive|lemmas|theorems|lemma|corollary|proposition"
+               r"|theorem|schematic_goal|axiomatization|datatype|type_synonym"
+               r"|record|locale|class")
+DECL_RE = re.compile(rf"^({_DECL_WORDS})(?=\s|$)")
 
 TAG_MAP = {
     "definition": "DEF", "abbreviation": "ABBREV",
@@ -2203,7 +2205,58 @@ def extract_entries(lines: list[str],
             for e in entries[mod_from:]:
                 e.visibility = modifier
 
+    # Declarations that start mid-line [midline-decl].  A line holding one is
+    # cut there, so the entry before it reads only its own part.  Once that
+    # entry's scan has passed the line, the next part is revealed with the
+    # text before it blanked, which puts the keyword at command position.
+    # This works on copies: the caller's views stay whole, and so does what
+    # `_attach_targets` reads below.
+    whole = (lines, outer, live)
+    mids = _mid_decls(outer)
+    if mids:
+        lines, outer = list(lines), list(outer)
+        live = list(live) if live is not None else None
+        open_at = bytearray(open_at)
+        for ln, col in reversed(mids):
+            for view, src in zip((lines, outer, live), whole):
+                if view is not None:
+                    view[ln] = src[ln][:col]
+    mk = 0              # the next of `mids` to reveal
+    routed = 0          # len(entries) when the last command was dispatched
+    minted: list[tuple[int, int]] = []    # (entry index, line) of each reveal
+
+    def reveal() -> None:
+        nonlocal mk
+        ln, col = mids[mk]
+        same = [c for l2, c in mids if l2 == ln]
+        k = same.index(col)
+        stop = same[k + 1] if k + 1 < len(same) else None
+        before = whole[1][ln][same[k - 1] if k else 0:col]
+        # Lines cannot separate this declaration from what precedes it, so
+        # it has no cut span; nor has the entry before, when the text ahead
+        # of it is that entry's (`by simp lemma b`).
+        if entries and _continues_entry(before):
+            entries[-1].shares_line = entries[-1].runs_into_next = True
+        minted.append((len(entries), ln + 1))
+        for view, src in zip((lines, outer, live), whole):
+            if view is not None:
+                view[ln] = " " * col + src[ln][col:stop]
+        open_at[ln] = 0
+        mk += 1
+
     while i < len(lines):
+        if mk < len(mids) and mids[mk][0] < i:
+            # The last command's scan ran past the line a declaration starts
+            # on: what it read beyond that line is the declaration's.
+            ln = mids[mk][0] + 1
+            entries[routed:] = [e for e in entries[routed:] if e.thy_line <= ln]
+            for e in entries[routed:]:
+                e.decl_end_line = min(e.decl_end_line, ln)
+                if e.proof_line > ln:
+                    e.proof_line = 0
+            i = ln - 1
+            reveal()
+            continue
         line = lines[i]
         # No line-level mask here: the outer view already blanks comments, ML
         # bodies, cancelled text and `text`-block prose, so a declaration
@@ -2213,10 +2266,14 @@ def extract_entries(lines: list[str],
         # cannot: a line that is wholly PROSE versus one that is wholly TERM.
         md, indent = _match_decl_at(outer[i], table)
         if md is None:
+            if mk < len(mids) and mids[mk][0] == i:
+                reveal()
+                continue
             i += 1
             continue
 
         stamp()
+        routed = len(entries)
         modifier, mod_from = _modifier_at(outer[i]), len(entries)
         keyword, tag, route = md
         # The keyword occupies the same columns in `outer` as in `line` — the
@@ -2487,10 +2544,13 @@ def extract_entries(lines: list[str],
         i += 1
 
     stamp()
+    for k, ln in minted:
+        if k < len(entries) and entries[k].thy_line == ln:
+            entries[k].shares_line = True
     # A post-pass rather than threading through five Entry constructions: the
     # block chain is a property of the line an entry starts on, so it can be
     # read off once the entries exist and their start lines are known.
-    _attach_targets(entries, outer, live)
+    _attach_targets(entries, whole[1], whole[2])
     return entries
 
 
@@ -2537,6 +2597,19 @@ _LETTER_SYM = r"\\<(?:{})>".format(
 _NAME_GOES_ON = (rf"[\w']|\\<\^su[bp]>|{_LETTER_SYM}"
                  rf"|\.(?:[A-Za-z]|{_LETTER_SYM})")
 _LEADING_CMD_RE = re.compile(rf"^([A-Za-z][A-Za-z_0-9]*+)(?!{_NAME_GOES_ON})")
+
+# A declaration that does not start its line [midline-decl].  Isabelle reads a
+# command wherever a token starts, so `by simp lemma b: True` declares `b`
+# (`Simpl/Semantic:1666`), as do `text \<open>major\<close> lemma ...` and
+# three `abbreviation`s on one line (`CoCon/Prelim:16`): 36 AFP declarations
+# no line-start test sees (`scripts/probe_midline_decls.py`).  Built-in
+# keywords only: they are reserved in every theory, while the custom-command
+# table is a union over the whole root, where a command of one entry can be
+# a plain name in another.  Searched for in the outer view, so a keyword in a
+# term or a comment is already blank.
+_DECL_WORD_RE = re.compile(_DECL_WORDS)
+_TOKEN_BEFORE = frozenset(" \t)]}")
+_MODIFIER_BEFORE_RE = re.compile(r"(?:private|qualified)\s+$")
 
 
 def _structural_command_lines(
@@ -2804,6 +2877,57 @@ _EITHER_MODE = frozenset({
     "thy_deps", "try", "try0", "typ", "unused_thms", "value", "values",
     "welcome",
 })
+# Commands that begin no entry, so text before a mid-line declaration that
+# opens with one is not the previous entry's [midline-decl].
+_OTHER_COMMANDS = (_EITHER_MODE | _SPAN_BOUNDARY_COMMANDS
+                   | {"type_notation", "no_type_notation", "abbrevs"})
+
+
+def _mid_decls(outer: list[str]) -> list[tuple[int, int]]:
+    """``(line, column)``, both 0-indexed, of every declaration that starts
+    after the first token of its line [midline-decl], at its `private` /
+    `qualified` modifier if it has one.
+
+    A bare alternation, with the token test in Python on its hits: one
+    pass, whose start-character prefilter skips most columns.  A lookbehind
+    ahead of the alternation defeats that filter, and in a view that blanks
+    terms to spaces it then tries every keyword at nearly every column; that
+    cost a third of the whole parse on the AFP's largest theories."""
+    text = "\n".join(outer)
+    hits: list[int] = []
+    for m in _DECL_WORD_RE.finditer(text):
+        k, end = m.span()
+        # A token (not `?fun`, `x.lemma` or `lemmas`), and not the first on
+        # its line.
+        if (k and text[k - 1] in _TOKEN_BEFORE
+                and (end == len(text) or text[end].isspace())):
+            bol = text.rfind("\n", 0, k) + 1
+            mm = _MODIFIER_BEFORE_RE.search(text, bol, k)
+            at = mm.start() if mm else k
+            if text[bol:at].strip():
+                hits.append(at)
+    if not hits:
+        return []
+    starts = [0]
+    for o in outer:
+        starts.append(starts[-1] + len(o) + 1)
+    found: list[tuple[int, int]] = []
+    for pos in sorted(set(hits)):
+        ln = bisect_right(starts, pos) - 1
+        found.append((ln, pos - starts[ln]))
+    return found
+
+
+def _continues_entry(segment: str) -> bool:
+    """Whether the outer text *segment*, which precedes a mid-line
+    declaration on its line, belongs to the entry before it: a proof's `by`
+    or `qed`, or a statement running on.  Not if it opens a command of its
+    own, such as `text`; a declaration there is an entry of its own, and
+    `_mark_shared_lines` already pairs two entries on one line."""
+    m = _FIRST_WORD_RE.match(segment.lstrip())
+    return not (m and m.group(0) in _OTHER_COMMANDS)
+
+
 # A command word, as the first token of an outer line: `proof(induct x)` is
 # `proof`.
 _FIRST_WORD_RE = re.compile(r"[A-Za-z][A-Za-z_0-9']*|\\<proof>|\.\.?|[{}]")
@@ -2888,6 +3012,16 @@ def compute_spans(entries: list[Entry], section_lines: list[int],
         # start never reads as its end.
         idx = bisect_right(structural, e.thy_line)
         e.thy_end = (structural[idx] - 1) if idx < n else total_lines
+    # A declaration that starts mid-line after the previous entry's own text
+    # (`by simp lemma b`) leaves that line to both [midline-decl], so the
+    # previous entry runs through it rather than stopping short of its own
+    # `by`.
+    if any(e.runs_into_next for e in entries):
+        placed = sorted((e for e in entries if e.thy_line),
+                        key=lambda e: e.thy_line)
+        for a, b in zip(placed, placed[1:]):
+            if a.runs_into_next and a.thy_line < b.thy_line == a.thy_end + 1:
+                a.thy_end = b.thy_line
 
 
 def _attach_preambles(entries: list[Entry], lines: list[str],

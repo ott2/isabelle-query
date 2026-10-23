@@ -203,9 +203,15 @@ class Entry:
 
     shares_line: bool = False
         # Another entry's line span meets this one's: two declarations written
-        # on one line (`consts F G`, a one-line `axiomatization`), or a body
-        # ending on the line the next declaration starts.  Lines cannot
+        # on one line (`consts F G`, a one-line `axiomatization`, `by simp
+        # lemma b`), or a body ending on the line the next declaration starts.  Lines cannot
         # separate them, so `cut_span` is None.  Set by `_mark_shared_lines`.
+
+    runs_into_next: bool = False
+        # The next declaration starts mid-line on a line this entry's own
+        # text reaches (`by simp lemma b: ...`), so this entry's span runs
+        # through that line and both entries have `shares_line` set.  Set by
+        # `extract_entries` [midline-decl].
 
     def _line_cut(self) -> tuple[int, int]:
         """`cut_span` before the shared-line check: the extent alone."""
