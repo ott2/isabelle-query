@@ -268,13 +268,13 @@ for e in sec.entries:
     print(e.name, e.src_start, e.thy_end, e.proof_line, e.body_end_line)
 ```
 
-`isabelle_query.api` exports exactly four names — `parse_theory`, `parse_root`,
-`Entry`, `TheorySection` — and **they follow the same policy as the CLI: a
+`isabelle_query.api` exports exactly five names — `parse_theory`, `parse_root`,
+`resolve_theories`, `Entry`, `TheorySection` — and **they follow the same policy as the CLI: a
 change that breaks them takes the major version slot.** Nothing else in the
 package is supported; import from `isabelle_query.parsing` and any release may
 move it.
 
-Four rather than the dozen functions that look public, because their results
+So few rather than the dozen functions that look public, because their results
 are already fields on the two objects, and the hard part is the order the
 scanners run in — that composition is what `parse_theory` is. Isabelle's
 keyword table is session-wide, so a single theory parsed alone cannot see a
@@ -288,6 +288,12 @@ span can promise that — two declarations sharing a line — and a caller shoul
 refuse there rather than widen it. When `e.preamble_follows_heading` is set,
 the preamble sits directly under a heading and may introduce the section
 rather than the entry: ask before moving it.
+
+A tool that takes a **locus** query printed (`Foo:12..30`, `beta/Examples:7`)
+reads its theory with `resolve_theories([...], root=DIR)`, the CLI's own
+reader: every file each name designates, so an ambiguous one can be refused
+rather than guessed. It reads only ROOT files and theory headers, once per
+call, so pass a batch.
 
 ## Installation
 

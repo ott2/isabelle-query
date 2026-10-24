@@ -34,7 +34,7 @@ from isabelle_query.model import (
     _CITABLE_TAGS,
     _DEFINITION_TAGS,
     _RESULT_TAGS,
-    label_chain,
+    theory_candidates,
 )
 from isabelle_query.parsing import ISA_SYMBOL, _isa_word_pattern, implicitly_used
 from isabelle_query.graph import (
@@ -300,74 +300,21 @@ def _summary_aggregate(sections: list[TheorySection], *,
 
 
 def _resolve_theory(sections: list[TheorySection], name: str) -> TheorySection | None:
-    """Resolve a theory by path or by name.
+    """Resolve a theory by path, name or label: the first of
+    :func:`model.theory_candidates`, which holds the tiers and is the same
+    reader `api.resolve_theories` exports [theory-candidates].
 
-    Two argument forms, so callers can paste either a file path or a
-    bare theory name:
-
-      - **Path form** — the argument carries a path separator or a
-        ``.thy`` suffix (e.g. ``sub/Foo.thy``).
-        Matched against each section's resolved path, so symlinks and
-        relative/absolute spellings all land on the same section.
-      - **Name form** — a bare theory name (e.g.
-        ``Foo``), matched against the section's theory
-        name (exact, then case-insensitive).  This is the convenience
-        spelling: the name is looked up among the sections already
-        discovered through ``isabelle_layout``'s ROOT-walking routines.
-
-    The two forms are tried in that order rather than chosen between, because
-    a discovered theory NAME may itself contain a separator: a ROOT can
-    address a theory in a subdirectory by path (``theories "LK/Propositional"``
-    — the grammar has no per-theory ``in`` clause), and discovery carries it
-    under that spelling.  Branching on ``"/"`` alone made such a name
-    unresolvable, so ``summary`` printed a row, ``theory``'s "Known theories"
-    listed it, and passing it back gave "not found" — the tool disagreeing
-    with its own output, and a hole in the round-trip the locus grammar rests
-    on.
+    Two argument forms, so callers can paste either a file path or a bare
+    theory name.  A bare name that matches no theory exactly is then tried
+    case-insensitively, a convenience of the CLI's alone: a tool that
+    writes through the library should not land on `foo` when it asked for
+    `Foo`.
     """
+    hits = theory_candidates(sections, name)
+    if hits:
+        return hits[0]
     if name.endswith(".thy") or "/" in name:
-        try:
-            target = Path(name).resolve()
-        except OSError:
-            target = None
-        if target is not None:
-            for s in sections:
-                if s.path.resolve() == target:
-                    return s
-        # Before the stem fallback: the whole argument may be a path-spelled
-        # theory NAME.  Exact-first matters — with a `Propositional` section
-        # also present, the stem would otherwise capture `LK/Propositional`.
-        for s in sections:
-            if s.theory == name:
-                return s
-        # A LABEL, as `render.theory_labels` emits: the shortest directory
-        # qualification that names one theory, matched here as a suffix — the
-        # exact inverse of how it was built [disambig-names].  Without this the
-        # emitter's half is worse than useless: nineteen AFP theories are
-        # called `Examples`, and `beta/Examples` would fall to the stem
-        # fallback and resolve to `alpha/Examples`, silently and confidently.
-        # A label that looks paste-able and lands on a DIFFERENT theory is a
-        # worse answer than a bare ambiguous name, which at least reads as
-        # ambiguous.  Only a unique hit counts; anything else falls through.
-        # Matched against `label_chain` — the exact tuple `theory_labels`
-        # builds the label out of, so the two cannot drift [label-depth].
-        # (On disk the name is the stem, since Isabelle requires it; a
-        # buffer-parsed section is where they part company.)
-        want = tuple(Path(name).with_suffix("").parts)
-        hits = [s for s in sections
-                if label_chain(s)[-len(want):] == want]
-        if len(hits) == 1:
-            return hits[0]
-        # Path that doesn't match a known section: fall back to its
-        # stem so `path/to/Foo.thy` still resolves to theory `Foo`.
-        stem = Path(name).stem
-        for s in sections:
-            if s.theory == stem:
-                return s
         return None
-    for s in sections:
-        if s.theory == name:
-            return s
     for s in sections:
         if s.theory.lower() == name.lower():
             return s

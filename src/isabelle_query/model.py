@@ -25,6 +25,7 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeVar
 
 
 def _blank_spans(line: str, spans: list[tuple[int, int]]) -> str:
@@ -659,3 +660,94 @@ def locus_labels(sections: "Iterable[TheorySection]") -> dict[Path, str]:
     sections = list(sections)
     labels = theory_labels(sections)
     return {sec.path: labels[sec.path.resolve()] for sec in sections}
+
+
+T = TypeVar("T")   # a section, or a (theory, path) pair from a ROOT walk
+
+
+def theory_candidates(theories: "Iterable[T]", name: str, *,
+                      guess: bool = True) -> "list[T]":
+    r"""Every theory ``name`` designates, from the first tier that has one
+    [theory-candidates].  The first is the one the CLI reads a locus as.
+
+    *theories* are anything with a ``path`` and a ``theory`` (a
+    :class:`TheorySection`, or a name and path read from a ROOT walk), in
+    load order, one per file.  The tiers, tried in order rather than chosen
+    between, because a discovered theory NAME may itself contain a
+    separator: a ROOT can address a theory in a subdirectory by path
+    (``theories "LK/Propositional"`` — the grammar has no per-theory ``in``
+    clause), and branching on ``"/"`` alone once made such a name
+    unresolvable, so ``summary`` printed a row that passing back gave "not
+    found".  For a ``name`` with a separator or a ``.thy`` suffix:
+
+    1. **path** — the theory at that resolved path, so symlinks and
+       relative or absolute spellings land on one theory;
+    2. **exact name** — a path-spelled theory NAME.  Before the stem: with
+       a `Propositional` also present, the stem would capture
+       `LK/Propositional`;
+    3. **label** — the suffix :func:`theory_labels` prints, matched against
+       the same :func:`label_chain`, so the two cannot drift [label-depth].
+       Only a unique hit: nineteen AFP theories are called `Examples`, and
+       a `beta/Examples` that fell to the stem would land on
+       `alpha/Examples`, silently [disambig-names];
+    4. **stem** — so `path/to/Foo.thy` still finds theory `Foo`.  A guess:
+       only with ``guess``.
+
+    A bare name has only the exact-name tier here.  The CLI adds a
+    case-insensitive one after it (`commands._resolve_theory`).
+
+    The stem tier and the case-insensitive one are a reader's conveniences,
+    and a tool that writes should not inherit them: `gamma/Unique`, a label
+    of no theory, would come back as the one `alpha/Unique`, and an editor
+    would write there.  Neither is needed to read back what query printed —
+    a label resolves in the first three tiers by construction — so
+    ``guess=False`` (`api.resolve_theories`) stops after the label.
+
+    A tier can hold several theories — a bare name over a corpus, where the
+    CLI would have printed a label — and all of them are returned: the CLI
+    reads the first, and a caller that edits can refuse instead.
+    """
+    return _TheoryIndex(theories).candidates(name, guess=guess)
+
+
+class _TheoryIndex:
+    """*theories* indexed for :func:`theory_candidates`, for a caller with
+    many names to resolve (`api.resolve_theories`).  Scanning per name
+    resolves every path again, twice: over the AFP's 9,910 theories that is
+    20,000 syscalls a name.  The paths and chains are taken once, and only
+    when a name with a separator first needs them."""
+
+    def __init__(self, theories: "Iterable[T]") -> None:
+        self.theories = list(theories)
+        self.by_name: dict[str, list] = {}
+        for t in self.theories:
+            self.by_name.setdefault(t.theory, []).append(t)
+        self._by_path: dict[Path, list] | None = None
+        self._by_leaf: dict[str, list] = {}
+
+    def _index_paths(self) -> None:
+        self._by_path = {}
+        for t in self.theories:
+            self._by_path.setdefault(t.path.resolve(), []).append(t)
+            chain = label_chain(t)
+            self._by_leaf.setdefault(chain[-1], []).append((chain, t))
+
+    def candidates(self, name: str, *, guess: bool = True) -> list:
+        if not (name.endswith(".thy") or "/" in name):
+            return list(self.by_name.get(name, ()))
+        if self._by_path is None:
+            self._index_paths()
+        try:
+            target = Path(name).resolve()
+        except OSError:
+            target = None
+        if target is not None and target in self._by_path:
+            return list(self._by_path[target])
+        if name in self.by_name:
+            return list(self.by_name[name])
+        want = tuple(Path(name).with_suffix("").parts)
+        hits = [t for chain, t in self._by_leaf.get(want[-1], ()) if
+                chain[-len(want):] == want] if want else []
+        if len(hits) == 1:
+            return hits
+        return list(self.by_name.get(Path(name).stem, ())) if guess else []

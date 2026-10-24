@@ -2,12 +2,13 @@ r"""Every name `isabelle_query.api` promises must still be there [span-api].
 
 The reciprocal of `test_layout_surface.py`.  That file pins the ten
 `isabelle-layout` names query reaches for, so an upstream removal fails here
-rather than in a user's traceback; this one pins the four names query offers
+rather than in a user's traceback; this one pins the five names query offers
 *downstream*, for the same reason pointed the other way.  Exporting a name is
 the obligation — the README paragraph is only the notice — and without a test
 the obligation is a comment that a refactor can quietly overrule.
 
-**The surface is deliberately four names, not the dozen that look public.**
+**The surface is deliberately a handful of names, not the dozen that look
+public.**
 Issue #10 asked for ten line-scanners plus `_attach_preambles` and
 `_proof_extent`; their results are already fields on `Entry` and
 `TheorySection`, so the second class below pins those FIELDS.  That is the real
@@ -32,8 +33,10 @@ from pathlib import Path
 
 from isabelle_query import api
 
-# The four exported names, and what each has to be.
+# The five exported names, and what each has to be.  `resolve_theories`
+# reads a locus's THEORY as the CLI does (#34) [theory-candidates].
 SURFACE = [("parse_theory", "callable"), ("parse_root", "callable"),
+           ("resolve_theories", "callable"),
            ("Entry", "class"), ("TheorySection", "class")]
 
 # Fields a consumer of the spans depends on.  Named here rather than left to

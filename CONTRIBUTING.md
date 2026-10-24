@@ -202,12 +202,15 @@ cannot map is not a missing feature but a hole, and a hole prunes
 
 ## Library contract (`isabelle_query.api`)
 
-**Four names are supported: `parse_theory`, `parse_root`, `Entry`,
-`TheorySection`.** They carry the same promise as the CLI — a change that
+**Five names are supported: `parse_theory`, `parse_root`,
+`resolve_theories`, `Entry`, `TheorySection`.** They carry the same promise as the CLI — a change that
 breaks them takes the **major** version slot (SemVer, from 1.0.0). Everything else in
 the package is internal and may move in any release.
 
-Adding a fifth is a decision, not a convenience. `tests/test_api_surface.py`
+Adding a name is a decision, not a convenience: the fifth,
+`resolve_theories` (#34), exists because a tool that edits a printed locus
+must read it with query's reader, not a second one that can drift
+[theory-candidates]. `tests/test_api_surface.py`
 pins `__all__` **exactly**, not "at least", because a name that leaks into it
 is a name someone will import, and then it is promised whether or not that was
 meant. The same file pins the *span fields* of `Entry` and `TheorySection`,

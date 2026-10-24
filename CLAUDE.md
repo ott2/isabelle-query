@@ -39,7 +39,7 @@ with `shape` + `shape_cmds` (the proof-shape family), `premises` (a goal
 statement read premise by premise, for `show --premises`; just above
 `parsing`, below `render`), `_prog` (the invoked
 command name — a leaf that imports nothing, so any layer can reach it), `api`
-(the four-name supported import surface, sitting just above `parsing` and
+(the five-name supported import surface, sitting just above `parsing` and
 importing nothing else — see `CONTRIBUTING.md`), and `scripts/` (offline
 table-generation + dev utilities) as siblings.
 
