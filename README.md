@@ -66,7 +66,8 @@ query -R AFP/thys grep simp Tfin.thy:88..140       # search just a hunk
 Locations and spans share one grammar (`theory:line`, `theory:A..B`), so the
 tool's output is valid input: a locus from `callers` / `sorry` pastes into
 `enclosing`, and a span from `outline` / `largest` — or a proof block from
-`enclosing`'s own drill-down (`▸ have key 11..14`) — pastes into `lines`.
+`enclosing`'s own drill-down (`▸ have key 11..14`) — pastes into `lines`,
+which takes loci from several files at once.
 
 A theory prints as its bare name, and only far enough qualified to name one
 theory. Over a corpus that matters: nineteen AFP theories are called
