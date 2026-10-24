@@ -358,7 +358,9 @@ def _shadowed_uses_on_line(line: str, names: set[str],
     Everything else — `by simp`, `apply (auto simp: h)`, `[symmetric]` — is the
     method or attribute of that name doing its job, and mints no edge.
     """
-    cited, _ = _cited_facts_on_line(line)
+    # A cited `this` is Isar's current fact, whatever is declared under the
+    # name (Jinja's `definition this :: vname`): `from this` uses no entry.
+    cited = _cited_facts_on_line(line)[0] - {"this"}
     if derived:
         cited = cited | {n for n in names
                          if n + "_def" in cited or n + "_defs" in cited}
@@ -1270,7 +1272,10 @@ def _fact_tokens(line: str) -> list[str]:
 
     A cartouche is matched by depth, so a nested one is inside it.  One still
     open when the line ends runs to the end: the command text is a single
-    line, and the rest of a proposition wrapped onto the next is not in it."""
+    line, and the rest of a proposition wrapped onto the next is not in it.
+
+    A selection is dropped (:func:`_drop_selections`): the fact is the name
+    before it."""
     toks: list[str] = []
     i = 0
     while m := _LITERAL_OPEN_RE.search(line, i):
@@ -1291,7 +1296,29 @@ def _fact_tokens(line: str) -> list[str]:
             toks.append(_literal_key(line[body:end]))
         i = close
     toks += _FACT_TOK_RE.findall(line, i)
-    return toks
+    return _drop_selections(toks)
+
+
+def _drop_selections(toks: list[str]) -> list[str]:
+    """*toks* without its selections [fact-selection]: a parenthesis group
+    of numerals, `assms(1)`, `Suc.hyps (1, 3)`, `f(2-)` (the `-` is no
+    token).  Read as structure, its `(` ended a fact list, so `using
+    assms(1) foo` cited `assms` alone.  The same group after a method is
+    its premise count or occurrence list, `frule (1) r`, `subst (1 2) c`,
+    and dropping it keeps `r` and `c` that method's arguments."""
+    out: list[str] = []
+    i, n = 0, len(toks)
+    while i < n:
+        if toks[i] == "(":
+            j = i + 1
+            while j < n and (toks[j] == "," or toks[j][:1].isdigit()):
+                j += 1
+            if j > i + 1 and j < n and toks[j] == ")":
+                i = j + 1
+                continue
+        out.append(toks[i])
+        i += 1
+    return out
 
 
 def _looks_like_fact(tok: str) -> bool:

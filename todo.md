@@ -309,17 +309,6 @@ in `CONTRIBUTING.md`.
         `scripts/probe_summary_parts.py`; a cheaper search would have to
         ride on an existing pass rather than scan the text again.
 
-- [ ] `[fact-selection]` A selection ends a fact list, hiding the facts
-      after it from M5a.  `graph._cited_facts_on_line` takes the `(` of
-      `assms(1)` as structure: `using assms(1) foo` cites only `assms`, as
-      do `from a(2) b` and `simp add: f(1) g`.  Inside a method the
-      `[metis-options]` stack already restores the method after the `)`,
-      so `metis a(1) b` cites both.  Extent at AFP tag Isabelle2025-2:
-      about 75,900 lists with a name after a selection (a grep, not a
-      parse, and it counts the method cases now fixed).  The fix is to
-      read `name(1,3-4)` as one token, the name; measure it with
-      `scripts/probe_fact_literals.py` and `scripts/probe_edge_dump.py`.
-
 ## Done
 
 Nothing — by design. Completed work is recorded in its commit messages, which
