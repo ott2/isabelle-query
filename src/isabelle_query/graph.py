@@ -364,8 +364,8 @@ def _shadowed_uses_on_line(line: str, names: set[str],
                          if n + "_def" in cited or n + "_defs" in cited}
     used = names & cited
     rest = names - used
-    if rest and ('"' in line or "\\<open>" in line):
-        terms = " ".join(a or b for a, b in _PROP_TEXT_RE.findall(line))
+    if rest and ('"' in line or "`" in line or "\\<open>" in line):
+        terms = " ".join("".join(g) for g in _PROP_TEXT_RE.findall(line))
         if terms:
             used = used | (rest & set(_WORD_RE.findall(terms)))
     return used
@@ -1230,14 +1230,21 @@ _FACT_MARKER_WORDS = frozenset({
 # contributes no citation; see :func:`_consume_attr_block`.
 _ATTR_FACT_WORDS = frozenset({"OF", "THEN", "unfolded", "folded", "simplified"})
 
-# Strip quoted propositions and cartouches so their internal tokens are never
-# mistaken for cited facts (`have "using x" by ...` cites nothing from the term).
-_DQUOTE_STRIP_RE = re.compile(r'"[^"]*"')
-_CARTOUCHE_STRIP_RE = re.compile(r"\\<open>.*?\\<close>")
-# The same two regions, captured rather than blanked: the *term* text of a line.
-# A name occurring here is being used as a constant or in a statement, which is
-# a real use even when that name also happens to be a proof method.
-_PROP_TEXT_RE = re.compile(r'"([^"]*)"|\\<open>(.*?)\\<close>')
+# A string is a term (`have "using x" by ...` cites nothing from it) and is
+# skipped whole.  A cartouche or a backquoted string in a fact position is a
+# fact literal [fact-literal]: `from \<open>A\<close>` and `` from `A` `` cite
+# the fact whose proposition is `A`, exactly as `from a` cites it by name.
+# Each literal is one token, keyed by its text so the two spellings meet;
+# where it stands decides whether it cites (`using`, `simp add:`, `rule`,
+# `[OF ...]`) or not (`have`, `[of ...]`, `cases`).  Read as words, a
+# backquote's contents were once a list of names (`` `x < y` `` cited `x` and
+# `y`), and a cartouche's were blanked, citing nothing (#31).
+_LITERAL_OPEN_RE = re.compile(r'"|`|\\<open>|‹')
+_CARTOUCHE_EDGE_RE = re.compile(r"\\<open>|‹|\\<close>|›")
+# The term text of a line, captured: a name occurring here is being used as a
+# constant or in a statement, which is a real use even when that name also
+# happens to be a proof method.
+_PROP_TEXT_RE = re.compile(r'"([^"]*)"|`([^`]*)`|\\<open>(.*?)\\<close>')
 # Token stream for the fact walk: names (with internal dots for qualified
 # spellings), the `..` proof, and the structural chars that delimit method args.
 # `ISA_SYMBOL`, not the narrower name atom: this is a RUN scanner over source
@@ -1250,11 +1257,41 @@ _FACT_TOK_RE = re.compile(
 _STRUCTURAL = frozenset({"(", ")", "[", "]", "|", ",", ":", ".."})
 
 
-def _strip_props(text: str) -> str:
-    """Blank out quoted / cartouche propositions so their tokens are not read as
-    cited facts."""
-    text = _DQUOTE_STRIP_RE.sub(" ", text)
-    return _CARTOUCHE_STRIP_RE.sub(" ", text)
+def _literal_key(text: str) -> str:
+    """The token a fact literal stands as: its proposition, whitespace
+    collapsed, between backquotes — never a name, so it cannot meet one."""
+    return "`" + " ".join(text.split()) + "`"
+
+
+def _fact_tokens(line: str) -> list[str]:
+    r"""The token stream of one proof line for the fact walk: strings
+    skipped, each fact literal one token (:func:`_literal_key`), and the rest
+    split by :data:`_FACT_TOK_RE`.
+
+    A cartouche is matched by depth, so a nested one is inside it.  One still
+    open when the line ends runs to the end: the command text is a single
+    line, and the rest of a proposition wrapped onto the next is not in it."""
+    toks: list[str] = []
+    i = 0
+    while m := _LITERAL_OPEN_RE.search(line, i):
+        toks += _FACT_TOK_RE.findall(line, i, m.start())
+        opener, body = m.group(), m.end()
+        if opener in ("\\<open>", "‹"):
+            depth, end, close = 1, len(line), len(line)
+            for e in _CARTOUCHE_EDGE_RE.finditer(line, body):
+                depth += 1 if e.group() in ("\\<open>", "‹") else -1
+                if depth == 0:
+                    end, close = e.start(), e.end()
+                    break
+        else:
+            end = line.find(opener, body)
+            end = len(line) if end < 0 else end
+            close = min(end + 1, len(line))
+        if opener != '"':
+            toks.append(_literal_key(line[body:end]))
+        i = close
+    toks += _FACT_TOK_RE.findall(line, i)
+    return toks
 
 
 def _looks_like_fact(tok: str) -> bool:
@@ -1321,8 +1358,10 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
     the ``NAME:``-marked fact lists inside a method (``simp add: f g``), the bare
     arguments of a rule-style method (``rule r``, ``metis a b``), and the
     fact-composing attribute blocks (``[OF a]`` / ``[THEN t]`` /
-    ``[unfolded d]``).  Quoted propositions are stripped first, so a term that
-    merely *contains* a keyword is ignored.
+    ``[unfolded d]``).  A string is skipped, so a term that merely *contains*
+    a keyword is ignored; a cartouche or backquoted literal is one token, a
+    fact wherever a name would be (:func:`_fact_tokens`), keyed
+    `` `A` `` whichever way it was spelled.
 
     Two shapes that used to leak spurious tokens are handled exactly:
     a **chained cite keyword** (``using X unfolding Y``) ends the first fact
@@ -1336,7 +1375,7 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
     i.e. a shape whose arguments cannot be classified as facts-or-not.  The
     census sums this into a method-syntax coverage statistic.
     """
-    toks = _FACT_TOK_RE.findall(_strip_props(line))
+    toks = _fact_tokens(line)
     facts: set[str] = set()
     covered = True
     i, n = 0, len(toks)
@@ -1400,7 +1439,10 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
                 i += 1
                 continue
             if cur_method is None:
-                cur_method = t          # the method name
+                # The method name — never a literal, which in that slot
+                # follows an option group (`metis (no_types) \<open>P\<close>`).
+                if not t.startswith("`"):
+                    cur_method = t
                 i += 1
                 continue
             # A bare argument to the current method.
@@ -1409,6 +1451,8 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
                     facts.add(t)
             elif cur_method in _TERM_ARG_METHODS:
                 pass                    # a term / flag, not a fact
+            elif t.startswith("`"):
+                pass                    # a literal: a term as like as a fact
             else:
                 covered = False         # unknown method with bare args
             i += 1

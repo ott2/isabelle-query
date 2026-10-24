@@ -57,7 +57,7 @@ Flags, beyond the global `-R/--root` and `--version`:
 | M2 | `w2_src` | as-written proposition width, in tokens | exact |
 | M3 | `frame_ratio` | delta-tracing overhead (components mentioned / changed) | definitional¹ |
 | M4 | `dag_ratio_est` | cross-step redundancy (repeated bracketed subterms / block) | estimator |
-| M5a | `fanin` | distinct facts cited for a step | exact |
+| M5a | `fanin` | distinct facts cited for a step, by name or as a literal (`‹P›`, `` `P` ``) | exact |
 | M5b | `live` | named facts simultaneously live at a step | exact |
 | M5c | `introduce`/`consume` | fact-introducing vs fact-citing steps, a citation counted on the goal it serves | exact |
 | M6 | extension curve | width remaining after naming the *k* most-repeated subterms | estimator |

@@ -17,7 +17,9 @@ Each fixture below is written as the issue wrote it: the triggering shape, then
 **the identical proof without it**.  Asserting fault == control is what makes
 these regression tests rather than descriptions — it pins the property (the
 spelling must not change the measurement), so it keeps holding if the numbers
-themselves legitimately change.
+themselves legitimately change.  (a)'s control spells the cited fact with
+backquotes rather than dropping it: the cartouche is a citation (#31), so the
+proof without it cites one fact fewer.
 
 (a) is worth separating from the module docstring's general "line-anchored,
 undercounts multi-*statement* lines" caveat, because the affected spelling is
@@ -46,10 +48,10 @@ proof -
   show ?thesis by simp
 qed
 
-lemma a_control_no_cartouche: "True"
+lemma a_control_backquoted: "True"
 proof -
   have p: "True" by simp
-  from p have "True \<and> True" by simp
+  from p `True` have "True \<and> True" by simp
   show ?thesis by simp
 qed
 
@@ -109,7 +111,7 @@ class ACartoucheFactReferenceIsNotTheProposition(unittest.TestCase):
 
     def test_it_matches_the_same_proof_written_without_a_cartouche(self):
         self.assertEqual(_goal_shape("a_cartouche_citation"),
-                         _goal_shape("a_control_no_cartouche"))
+                         _goal_shape("a_control_backquoted"))
 
     def test_the_proposition_is_measured_not_the_cited_fact(self):
         # The trap in fixing (a): once the line is a goal step, a scanner that
@@ -125,7 +127,8 @@ class ACartoucheFactReferenceIsNotTheProposition(unittest.TestCase):
         # premise it does not cite.  A fault that MOVES a number is worse than
         # one that only subtracts.
         by_line = {s.line: s.fanin for s in _goals("a_cartouche_citation")}
-        self.assertEqual(by_line[7], 1)   # `from p ... have` cites p
+        # `from p \<open>True\<close> have` cites p and the literal (#31)
+        self.assertEqual(by_line[7], 2)
         self.assertEqual(by_line[8], 0)   # `show ?thesis` cites nothing
 
     def test_a_nested_cartouche_does_not_strand_its_closer(self):

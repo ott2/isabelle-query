@@ -986,6 +986,14 @@ def annotate_fanin(steps: list[Step], sec: TheorySection) -> None:
     working-set pressure is M5b's (live-fact space), not M5a's.  Non-goal steps
     keep ``fanin`` 0.
 
+    A fact cited as a literal, ``from \<open>A\<close>`` or `` from `A` ``,
+    counts as one fact, the same one in either spelling.  Until #31 the
+    cartouche counted not at all and the backquoted form as the names in
+    it, and about 98% of the literals in the Isabelle2025-2 AFP are
+    cartouches: a development that quotes its premises rather than naming
+    them was undercounted, and a release-over-release census moved with the
+    2019 migration from backquotes to cartouches.
+
     **Scope.** This counts *explicit source-cited* premises only — the facts a
     reader sees named in the text.  It does **not** count what a ``simp``/``auto``
     invocation pulls from the default simpset/claset (invisible without the
