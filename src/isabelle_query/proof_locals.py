@@ -88,11 +88,21 @@ _NAME = rf"{_LETTER}(?:{_LETTER}|[0-9_']|\\<\^sub>)*"
 # A dotted name is one token (`Suc.IH`, `assms(1)` reads as `assms`); `?x` is a
 # schematic abbreviation; the punctuation is what the grammar below looks at.
 # Any other symbol (`\<in>`, `\<^sup>`) is matched whole so its letters never
-# surface as a word, and then dropped (the `sym` group).
+# surface as a word, and then dropped (the `sym` group).  A numeral is a name
+# too [numeral-label]: Isar's `name` admits `nat`, so `assumes 1: "P"` binds
+# and `using 1` reads, as do case facts `1.prems` (#32).  This is the outer
+# view, where a numeral in a term is already blank.
 _TOKEN_RE = re.compile(
-    rf"(\?{_NAME})|({_NAME}(?:\.{_NAME})*)|(?P<sym>\\<\^?\w+>)"
-    rf"|(\.\.|::|[.{{}}()\[\]:=,])")
+    rf"(\?{_NAME})|({_NAME}(?:\.{_NAME})*)|([0-9]+(?![\w'])(?:\.{_NAME})*)"
+    rf"|(?P<sym>\\<\^?\w+>)|(\.\.|::|[.{{}}()\[\]:=,])")
 _TERM_TOKEN_RE = re.compile(rf"\??{_NAME}|(?P<sym>\\<\^?\w+>)")
+# A string is a name as well (`by (meson "2" foo)`, `using "14.prems"`):
+# Sledgehammer quotes the names that are not identifiers.  Under a command
+# that cites facts, one that is nothing but a name reads that fact
+# [numeral-label] — except as a term argument, `[of "i"]`, `[where x =
+# "t"]`, `rule_tac x = "t"`, where the outer text before it says so.
+_QUOTED_NAME_RE = re.compile(rf"(?:{_NAME}|[0-9]+)(?:\.{_NAME})*")
+_TERM_ARG_BEFORE_RE = re.compile(r"(?:\[\s*(?:of|where)\b[^\[\]]*|=\s*)$")
 
 # Every word that starts a proof command.  Recognised only outside parentheses
 # and brackets, so a method's arguments (`proof (cases x)`) never read as one.
@@ -279,8 +289,15 @@ def _word_char(ch: str) -> bool:
 
 def _is_name(tok: str) -> bool:
     """A name token, as opposed to punctuation.  Not `isalpha()`: a name may
-    begin with a letter SYMBOL, and `define \\<epsilon> where` is common."""
-    return tok[0].isalpha() or tok[0] == "\\"
+    begin with a letter SYMBOL, and `define \\<epsilon> where` is common, or
+    be a numeral (`assumes 1:`)."""
+    return tok[0].isalnum() or tok[0] == "\\"
+
+
+def _is_var(tok: str) -> bool:
+    """A name a variable may have: not a numeral, which is a fact name only
+    (`define c (…) [80, 80]` fixes no `80`)."""
+    return _is_name(tok) and not tok[0].isdigit()
 
 
 @dataclass
@@ -569,6 +586,7 @@ def _walk(sec: TheorySection, entry: Entry,
     _seed_premises(sec, entry, w)
     cmd = ""
     nest = 0              # parentheses + brackets: no command starts inside
+    selection = 0         # the `nest` of a `name(…)` selection, or 0
     label_next = False    # the next token may be a label
     premises = False      # after `if` / `when`: labels local to the goal
     after_where = False
@@ -602,6 +620,11 @@ def _walk(sec: TheorySection, entry: Entry,
                 method_text = True
             elif t.cartouche and cmd in _FACT_CMDS:
                 w.read_statement(t.term)
+            elif (not t.cartouche and cmd in _FACT_CMDS
+                  and _QUOTED_NAME_RE.fullmatch(t.term)
+                  and not _TERM_ARG_BEFORE_RE.search(
+                      outer_src[t.line - 1][:t.col])):
+                w.read(("f", _unqualified(t.term)))
             i += 1
             continue
         if t.inner:
@@ -620,10 +643,22 @@ def _walk(sec: TheorySection, entry: Entry,
         if s in "([":
             nest += 1
             label_next = False
+            # `1(2)`, `assms(1)`: a selection, whose numerals are indices.
+            # Glued to a command (`by(simp add: 1)`) it is a method.
+            p = toks[i - 1] if i else None
+            if (s == "(" and p is not None and not p.inner
+                    and p.line == t.line and p.col + len(p.text) == t.col
+                    and _is_name(p.text) and p.text not in _COMMANDS):
+                selection = nest
             i += 1
             continue
         if s in ")]":
+            if nest == selection:
+                selection = 0
             nest = max(0, nest - 1)
+            i += 1
+            continue
+        if selection and s[0].isdigit():
             i += 1
             continue
         if nest == 0 and (s in _COMMANDS or s in ("{", "}", ".", "..")):
@@ -646,7 +681,7 @@ def _walk(sec: TheorySection, entry: Entry,
                     # Back at the entry's own goal: its outermost block closed.
                     # Asked before `close_subgoal`, which would also reach it.
                     if len(w.scopes) == 1:
-                        w.end, closing = t.line, True
+                        w.end, closing, cmd = t.line, True, s
                         i += 1
                         continue
                     w.proved = True
@@ -655,7 +690,7 @@ def _walk(sec: TheorySection, entry: Entry,
                 w.open("proof")
             elif s in _TERMINATORS:
                 if len(w.scopes) == 1:
-                    w.end, closing = t.line, True
+                    w.end, closing, cmd = t.line, True, s
                     i += 1
                     continue
                 w.proved = True
@@ -735,12 +770,12 @@ def _walk(sec: TheorySection, entry: Entry,
                 continue
         if variables:
             if (cmd == "obtain" and not after_where and not after_type
-                    and _is_name(s)):
+                    and _is_var(s)):
                 obtain_vars = True
             # Only the names before `where`: a `for` after it binds a
             # parameter of the defining equation, not a new constant.
             if (cmd == "define" and not after_where and not after_type
-                    and _is_name(s)):
+                    and _is_var(s)):
                 b = LocalBinding(s, "define", t.line, entry.name)
                 w.made(b, outer_src)
                 w.bindings.append(b)
