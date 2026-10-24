@@ -1204,10 +1204,10 @@ _FACT_LIST_STOP = (GOAL_KEYWORDS | CLOSING_KEYWORDS | _CITE_LIST_WORDS
                    | {"proof", "and"})
 
 # Methods whose *bare* (colon-free) arguments are fact names, not terms/flags:
-# `by (rule conjI)`, `by (metis a b)`, `by (unfold d)`.
+# `by (rule conjI)`, `by (metis a b)`, `by (unfold d)`, `by (smt (z3) a b)`.
 _RULE_METHODS = frozenset({
     "rule", "erule", "drule", "frule", "intro", "elim", "dest",
-    "metis", "meson", "subst", "unfold", "fold",
+    "metis", "meson", "smt", "subst", "unfold", "fold",
 })
 # Methods whose bare arguments are terms / flags / induction variables — never
 # facts.  A bare arg here is a *covered* non-fact, not an unclassifiable token.
@@ -1252,9 +1252,9 @@ _PROP_TEXT_RE = re.compile(r'"([^"]*)"|`([^`]*)`|\\<open>(.*?)\\<close>')
 # Narrowing it would split a stray `\<open>foo` and offer `open` as a candidate
 # fact — inventing an edge, which is the one thing this walk must not do.
 _FACT_TOK_RE = re.compile(
-    rf"\.\.|{ISA_WORD_CHAR}(?:{ISA_SYMBOL}|[\w'.])*|[():,|\[\]]|:")
+    rf"\.\.|{ISA_WORD_CHAR}(?:{ISA_SYMBOL}|[\w'.])*|[():,|;\[\]]|:")
 # Structural tokens that never name a fact.
-_STRUCTURAL = frozenset({"(", ")", "[", "]", "|", ",", ":", ".."})
+_STRUCTURAL = frozenset({"(", ")", "[", "]", "|", ",", ";", ":", ".."})
 
 
 def _literal_key(text: str) -> str:
@@ -1381,6 +1381,10 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
     i, n = 0, len(toks)
     in_method = False       # inside a `by`/`apply` method expression
     cur_method: str | None = None
+    # The method each open parenthesis interrupted [metis-options]: a group
+    # may be a method's options, `metis (no_types, lifting) a b`, after
+    # which `a b` are still `metis`'s arguments.
+    outer_methods: list[str | None] = []
     while i < n:
         t = toks[i]
         # from / with / using / unfolding fact list (prefix or suffix).  Each
@@ -1404,6 +1408,7 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
         if t in ("by", "apply"):
             in_method = True
             cur_method = None
+            outer_methods = []
             i += 1
             continue
         if in_method:
@@ -1423,7 +1428,8 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
                     # form, where `simp` is not itself followed by `:`.
                     if tj in _FACT_MARKER_WORDS:
                         break
-                    if tj in CLOSING_KEYWORDS or tj in (")", "]", "|", ","):
+                    if tj in CLOSING_KEYWORDS or tj in (")", "]", "|", ",",
+                                                       ";"):
                         break                       # group close / separator
                     if tj == "[":
                         j = _consume_attr_block(toks, j, facts)
@@ -1434,13 +1440,18 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
                 i = j
                 continue
             if t in _STRUCTURAL:
-                if t in ("(", ")", "|", ","):
+                if t == "(":
+                    outer_methods.append(cur_method)
                     cur_method = None   # a fresh method head may follow
+                elif t == ")":
+                    cur_method = outer_methods.pop() if outer_methods \
+                        else None
+                elif t in ("|", ",", ";"):
+                    cur_method = None   # `a, b`, `a | b`, `a; b`
                 i += 1
                 continue
             if cur_method is None:
-                # The method name — never a literal, which in that slot
-                # follows an option group (`metis (no_types) \<open>P\<close>`).
+                # The method name — never a literal.
                 if not t.startswith("`"):
                     cur_method = t
                 i += 1
