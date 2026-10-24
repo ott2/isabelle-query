@@ -309,6 +309,17 @@ in `CONTRIBUTING.md`.
         `scripts/probe_summary_parts.py`; a cheaper search would have to
         ride on an existing pass rather than scan the text again.
 
+- [ ] `[metis-options]` A method's option group hides its facts from M5a.
+      `graph._cited_facts_on_line` resets the method at every `(`, so in
+      `by (metis (no_types, lifting) a b)` the group's `)` makes `a` the
+      method name: nothing is cited, and with two facts the step is
+      uncovered too.  `by (metis a b)` cites both.  Extent at AFP tag
+      Isabelle2025-2: about 15,300 `metis` / `meson` calls with an option
+      group, of about 105,000 (a grep, not a parse).  Found while fixing
+      #31 [fact-literal], which stopped a literal taking that slot but left
+      the names.  The fix is a method name per parenthesis depth; it moves
+      the census, so measure it with `scripts/probe_fact_literals.py`.
+
 ## Done
 
 Nothing — by design. Completed work is recorded in its commit messages, which
