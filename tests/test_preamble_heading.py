@@ -44,9 +44,13 @@ THY = ('theory Base imports Main begin\n'                         # 1
 
 class APreambleUnderAHeading(unittest.TestCase):
 
+    @staticmethod
+    def by_name(text):
+        sec = api.parse_theory("Base", Path("<test>"), text.splitlines())
+        return {e.name: e for e in sec.entries}
+
     def setUp(self):
-        sec = api.parse_theory("Base", Path("<test>"), THY.splitlines())
-        self.by = {e.name: e for e in sec.entries}
+        self.by = self.by_name(THY)
 
     def flag(self, name):
         return self.by[name].preamble_follows_heading
@@ -76,6 +80,37 @@ class APreambleUnderAHeading(unittest.TestCase):
     def test_no_preamble_no_flag(self):
         self.assertFalse(self.flag("corge"))
         self.assertFalse(self.flag("inner"))
+
+
+def _without_preamble(e):
+    """The documented section-introduction reading [preamble-choice]."""
+    return e.cut_span and (e.thy_line, e.cut_span[1])
+
+
+class LeavingThePreambleBehind(unittest.TestCase):
+    """The README's one-liner, so a change to `cut_span` cannot break it."""
+
+    def test_starts_at_the_declaration(self):
+        by = APreambleUnderAHeading.by_name(THY)
+        self.assertEqual(_without_preamble(by["first"]), (5, 5))
+        self.assertEqual(_without_preamble(by["inner"]), (13, 18))
+
+    def test_none_where_cut_span_is(self):
+        by = APreambleUnderAHeading.by_name(
+            'theory Base imports Main begin\n'
+            'text \\<open>Doc.\\<close>\n'
+            'lemma a: "True" by simp lemma b: "True" by simp\n'
+            'end\n')
+        self.assertTrue(by["a"].shares_line)
+        self.assertIsNone(_without_preamble(by["a"]))
+
+    def test_never_wider_than_cut_span(self):
+        for name, e in APreambleUnderAHeading.by_name(THY).items():
+            with self.subTest(name):
+                lo, hi = e.cut_span
+                self.assertEqual(_without_preamble(e), (e.thy_line, hi))
+                self.assertLessEqual(lo, e.thy_line)
+                self.assertLessEqual(e.thy_line, hi)
 
 
 if __name__ == "__main__":

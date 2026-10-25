@@ -277,18 +277,6 @@ in `CONTRIBUTING.md`.
         `unused facts --spans` says `unclosed` there; that is by design
         [early-end], and `scripts/probe_early_end.py` lists them.
 
-- [ ] `[preamble-choice]` Let a tool choose how to treat a preamble, not
-      only learn that the choice is ambiguous (#28 follow-up).
-      `Entry.preamble_follows_heading` is the ambiguity signal; the choice
-      itself is missing, so a tool that decides "this `text` introduces the
-      section" must clip `cut_span` by hand, which is the clipping
-      `cut_span` exists to own.  Wanted: an easy switch between the two
-      readings, for instance a cut span that starts at `thy_line`, still
-      `None` under `shares_line`.  The flag plus the switch should cover
-      most cases.  Extent at AFP tag Isabelle2025-2: 8,847 of 32,002
-      preambles flagged, 6,445 of them with only blank lines between the
-      heading and the `text` (`scripts/probe_midline_decls.py`).
-
 - [ ] `[midline-decl]` What the mid-line declaration fix (#29) leaves.
       Extent at AFP tag Isabelle2025-2 unless stated:
       - Block structure is per line: an entry's `blocks` is the stack at

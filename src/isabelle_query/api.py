@@ -42,6 +42,8 @@ preamble-through-proof span a tool that deletes or moves an entry writes
 through, guaranteed to stop before the next entry.  `preamble_follows_heading`
 says the preamble sits under a heading with no entry between, where it may
 introduce the section instead: a tool should ask there rather than move it.
+Leaving it behind is `e.cut_span and (e.thy_line, e.cut_span[1])`, which
+keeps every guarantee of `cut_span`, `None` included.
 
 **Reading a locus.**  query prints a place as `THEORY:LINE` or
 `THEORY:A..B`, where THEORY is a label, not a path: the bare name in a

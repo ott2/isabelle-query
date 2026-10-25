@@ -106,6 +106,9 @@ class Entry:
         # between, so the `text` may introduce the section rather than
         # document this entry.  `cut_span` still starts at the preamble; a
         # tool that moves or deletes the entry should ask here, not guess.
+        # The other reading is `cut_span and (thy_line, cut_span[1])`: the
+        # end never precedes `thy_line`, so it is the same span from the
+        # declaration on, `None` in the same cases [preamble-choice].
         # Set by `_mark_preambles_under_headings` [preamble-heading].
     annotations: list[tuple[int, str, str]] = field(default_factory=list)
         # (line_no, content, kind) for every `\<comment> \<open>...\<close>`

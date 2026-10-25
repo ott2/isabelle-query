@@ -287,7 +287,9 @@ the end of the proof, never reaching the next entry. It is `None` when no line
 span can promise that — two declarations sharing a line — and a caller should
 refuse there rather than widen it. When `e.preamble_follows_heading` is set,
 the preamble sits directly under a heading and may introduce the section
-rather than the entry: ask before moving it.
+rather than the entry: ask before moving it. To leave it in place, cut
+`e.cut_span and (e.thy_line, e.cut_span[1])` — the same span from the
+declaration on, with the same guarantees.
 
 A tool that takes a **locus** query printed (`Foo:12..30`, `beta/Examples:7`)
 reads its theory with `resolve_theories([...], root=DIR)`, the CLI's own
