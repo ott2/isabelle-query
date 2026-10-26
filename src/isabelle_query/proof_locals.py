@@ -73,7 +73,8 @@ from isabelle_query.graph import (
     CLOSING_KEYWORDS, CONTEXT_KEYWORDS, GOAL_KEYWORDS, PLUMBING_KEYWORDS,
     _noise_spans)
 from isabelle_query.model import Entry, TheorySection
-from isabelle_query.parsing import LETTER_SYMS, TRANSFORMING_ATTRS
+from isabelle_query.parsing import (
+    LETTER_SYMS, SYM_IDENT, SYMBOLIC_KEYWORDS, TRANSFORMING_ATTRS)
 from isabelle_query.premises import statement_of
 
 # An identifier by Isabelle's own lexical rule (`Doc/Isar_Ref`, "letter"): an
@@ -90,18 +91,30 @@ _NAME = rf"{_LETTER}(?:{_LETTER}|[0-9_']|\\<\^sub>)*"
 # Any other symbol (`\<in>`, `\<^sup>`) is matched whole so its letters never
 # surface as a word, and then dropped (the `sym` group).  A numeral is a name
 # too [numeral-label]: Isar's `name` admits `nat`, so `assumes 1: "P"` binds
-# and `using 1` reads, as do case facts `1.prems` (#32).  This is the outer
-# view, where a numeral in a term is already blank.
+# and `using 1` reads, as do case facts `1.prems` (#32).  So is a symbolic
+# identifier standing alone, `assumes *:` and `using * **` (#35), though a
+# keyword so spelled is not (:func:`_is_name`).  This is the outer view,
+# where a numeral in a term is already blank.
 _TOKEN_RE = re.compile(
     rf"(\?{_NAME})|({_NAME}(?:\.{_NAME})*)|([0-9]+(?![\w'])(?:\.{_NAME})*)"
-    rf"|(?P<sym>\\<\^?\w+>)|(\.\.|::|[.{{}}()\[\]:=,])")
-_TERM_TOKEN_RE = re.compile(rf"\??{_NAME}|(?P<sym>\\<\^?\w+>)")
-# A string is a name as well (`by (meson "2" foo)`, `using "14.prems"`):
-# Sledgehammer quotes the names that are not identifiers.  Under a command
-# that cites facts, one that is nothing but a name reads that fact
-# [numeral-label] — except as a term argument, `[of "i"]`, `[where x =
+    rf"|(?P<sym>\\<\^?\w+>)"
+    rf"|((?<![^\s(\[,;:]){SYM_IDENT}(?![^\s:()\[\],;]))"
+    rf"|(\.\.|::|[.{{}}()\[\]:=,])")
+_KEYWORD_ALT = "(?:" + "|".join(map(re.escape, SYMBOLIC_KEYWORDS)) + ")"
+# A symbolic name standing alone in a term may be method text's (`use x
+# in ‹simp add: * "**"›`, #35).  Read as a term it names nothing, and a read
+# only ever removes a candidate.
+_TERM_TOKEN_RE = re.compile(
+    rf"\??{_NAME}|(?P<sym>\\<\^?\w+>)"
+    rf"|(?<![^\s(\[,;:\"]){SYM_IDENT}(?=[\s)\],;\"\\]|\Z)")
+# A string is a name as well (`by (meson "2" foo)`, `using "14.prems"`,
+# `from "**"(4)`): Sledgehammer quotes the names that are not identifiers,
+# and over the AFP a symbolic label is cited quoted about as often as not.
+# Under a command that cites facts, one that is nothing but a name reads that
+# fact [numeral-label] — except as a term argument, `[of "i"]`, `[where x =
 # "t"]`, `rule_tac x = "t"`, where the outer text before it says so.
-_QUOTED_NAME_RE = re.compile(rf"(?:{_NAME}|[0-9]+)(?:\.{_NAME})*")
+_QUOTED_NAME_RE = re.compile(
+    rf"(?:{_NAME}|[0-9]+)(?:\.{_NAME})*|(?!{_KEYWORD_ALT}\Z){SYM_IDENT}")
 _TERM_ARG_BEFORE_RE = re.compile(r"(?:\[\s*(?:of|where)\b[^\[\]]*|=\s*)$")
 
 # Every word that starts a proof command.  Recognised only outside parentheses
@@ -283,21 +296,42 @@ def _body_tokens(sec: TheorySection, entry: Entry) -> list[_Tok]:
     return out
 
 
+_SYM_START = frozenset("!#$%&*+-/<=>?@^|~")
+
+
+def _after_quoted_name(toks: list[_Tok], i: int, live: list[str]) -> bool:
+    """Whether the `(` at *i* is glued to a quoted name, `"**"(4)`, so that
+    it opens a selection.  A string rides in the stream at its opening
+    quote, ahead of the names inside it, so look back past those."""
+    t = toks[i]
+    if live[t.line - 1][t.col - 1:t.col] != '"':
+        return False
+    q = i - 1
+    while q >= 0 and toks[q].inner and toks[q].term is None:
+        q -= 1
+    if q < 0 or toks[q].line != t.line:
+        return False
+    p = toks[q]
+    return (p.term is not None and not p.cartouche
+            and bool(_QUOTED_NAME_RE.fullmatch(p.term)))
+
+
 def _word_char(ch: str) -> bool:
     return ch.isalnum() or ch in "_'?"
 
 
 def _is_name(tok: str) -> bool:
     """A name token, as opposed to punctuation.  Not `isalpha()`: a name may
-    begin with a letter SYMBOL, and `define \\<epsilon> where` is common, or
-    be a numeral (`assumes 1:`)."""
-    return tok[0].isalnum() or tok[0] == "\\"
+    begin with a letter SYMBOL, and `define \\<epsilon> where` is common, be
+    a numeral (`assumes 1:`), or be a symbolic identifier (`assumes *:`)."""
+    return (tok[0].isalnum() or tok[0] == "\\"
+            or (tok[0] in _SYM_START and tok not in SYMBOLIC_KEYWORDS))
 
 
 def _is_var(tok: str) -> bool:
     """A name a variable may have: not a numeral, which is a fact name only
-    (`define c (…) [80, 80]` fixes no `80`)."""
-    return _is_name(tok) and not tok[0].isdigit()
+    (`define c (…) [80, 80]` fixes no `80`), nor a symbolic one."""
+    return _is_name(tok) and (tok[0].isalpha() or tok[0] == "\\")
 
 
 @dataclass
@@ -650,6 +684,8 @@ def _walk(sec: TheorySection, entry: Entry,
                     and p.line == t.line and p.col + len(p.text) == t.col
                     and _is_name(p.text) and p.text not in _COMMANDS):
                 selection = nest
+            elif s == "(" and _after_quoted_name(toks, i, live_src):
+                selection = nest    # `"**"(4)`
             i += 1
             continue
         if s in ")]":

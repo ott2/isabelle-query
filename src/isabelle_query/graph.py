@@ -43,7 +43,8 @@ from isabelle_query.model import (
     locus_labels,
 )
 from isabelle_layout import parse_thy_imports
-from isabelle_query.parsing import ISA_SYMBOL, ISA_WORD_CHAR, _line_mask
+from isabelle_query.parsing import (
+    ISA_SYMBOL, ISA_WORD_CHAR, SYM_IDENT, SYMBOLIC_KEYWORDS, _line_mask)
 
 
 def _build_line_index(sections: list[TheorySection]
@@ -1253,10 +1254,35 @@ _PROP_TEXT_RE = re.compile(r'"([^"]*)"|`([^`]*)`|\\<open>(.*?)\\<close>')
 # the tokenizer has already redacted, so its job is to find where a token ends.
 # Narrowing it would split a stray `\<open>foo` and offer `open` as a candidate
 # fact — inventing an edge, which is the one thing this walk must not do.
+#
+# A symbolic identifier (`parsing.SYM_IDENT`) is a name too (#35): `have *:
+# "P"` labels a fact `*`, which `using *` cites.  A run counts only standing
+# alone, so `intro!:` and a selection's `2-` stay a word and some noise, and
+# never as a keyword: read as tokens, `(rule r)+` and `simp?` would start a
+# method of their own (:data:`_NOT_FACT_SYMBOLS`).
 _FACT_TOK_RE = re.compile(
-    rf"\.\.|{ISA_WORD_CHAR}(?:{ISA_SYMBOL}|[\w'.])*|[():,|;\[\]]|:")
+    rf"\.\.|{ISA_WORD_CHAR}(?:{ISA_SYMBOL}|[\w'.])*"
+    rf"|(?<![^\s(\[,;:]){SYM_IDENT}(?![^\s:()\[\],;])"
+    r"|[():,|;\[\]]|:")
+# `|` is a keyword too, kept as the structural token that separates methods.
+_NOT_FACT_SYMBOLS = SYMBOLIC_KEYWORDS - {"|"}
 # Structural tokens that never name a fact.
 _STRUCTURAL = frozenset({"(", ")", "[", "]", "|", ",", ";", ":", ".."})
+
+
+# A string holding nothing but a name: Sledgehammer quotes the names that
+# are not identifiers (`metis "*" "1"`), and over the AFP a symbolic label
+# is cited quoted about as often as not (#35).  It stands as a token with
+# its quotes, so an unknown method's quoted term keeps coverage as a
+# literal does, and :func:`_unquote` makes it the fact `*`.
+_QUOTED_FACT_RE = re.compile(
+    rf"{ISA_WORD_CHAR}(?:{ISA_SYMBOL}|[\w'.])*"
+    rf"|(?!(?:{'|'.join(map(re.escape, SYMBOLIC_KEYWORDS))})\Z){SYM_IDENT}")
+
+
+def _unquote(tok: str) -> str:
+    """The fact a token names: a quoted name without its quotes."""
+    return tok[1:-1] if tok[:1] == '"' else tok
 
 
 def _literal_key(text: str) -> str:
@@ -1294,9 +1320,11 @@ def _fact_tokens(line: str) -> list[str]:
             close = min(end + 1, len(line))
         if opener != '"':
             toks.append(_literal_key(line[body:end]))
+        elif _QUOTED_FACT_RE.fullmatch(line[body:end]):
+            toks.append(line[m.start():close])      # `"*"`, `"1"`
         i = close
     toks += _FACT_TOK_RE.findall(line, i)
-    return _drop_selections(toks)
+    return _drop_selections([t for t in toks if t not in _NOT_FACT_SYMBOLS])
 
 
 def _drop_selections(toks: list[str]) -> list[str]:
@@ -1311,7 +1339,8 @@ def _drop_selections(toks: list[str]) -> list[str]:
     while i < n:
         if toks[i] == "(":
             j = i + 1
-            while j < n and (toks[j] == "," or toks[j][:1].isdigit()):
+            # A spaced range, `assms(2 - 7)`, has its `-` as a token (#35).
+            while j < n and (toks[j] in (",", "-") or toks[j][:1].isdigit()):
                 j += 1
             if j > i + 1 and j < n and toks[j] == ")":
                 i = j + 1
@@ -1336,6 +1365,7 @@ def _looks_like_fact(tok: str) -> bool:
     citation graph, this extractor only inspects fact-argument positions, so a
     single-char token there *is* a fact and no length floor applies.  The bare
     ``_`` is the term placeholder (`rule r[OF _ h]`), never a fact."""
+    tok = _unquote(tok)
     return (tok != "_" and tok not in _STRUCTURAL
             and not tok[:1].isdigit() and not tok.startswith("'"))
 
@@ -1372,7 +1402,7 @@ def _consume_attr_block(toks: list[str], i: int, facts: set[str]) -> int:
             take = False             # a fresh attribute head follows
         elif take and _looks_like_fact(t) \
                 and not (i + 1 < n and toks[i + 1] == ":"):
-            facts.add(t)
+            facts.add(_unquote(t))
         i += 1
     return i                         # unbalanced — consumed to end of line
 
@@ -1428,7 +1458,7 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
                 if tj in _STRUCTURAL:
                     break
                 if _looks_like_fact(tj):
-                    facts.add(tj)
+                    facts.add(_unquote(tj))
                 j += 1
             i = j
             continue
@@ -1462,7 +1492,7 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
                         j = _consume_attr_block(toks, j, facts)
                         continue
                     if _looks_like_fact(tj):
-                        facts.add(tj)
+                        facts.add(_unquote(tj))
                     j += 1
                 i = j
                 continue
@@ -1479,18 +1509,19 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
                 continue
             if cur_method is None:
                 # The method name — never a literal.
-                if not t.startswith("`"):
+                if not t.startswith(("`", '"')):
                     cur_method = t
                 i += 1
                 continue
             # A bare argument to the current method.
             if cur_method in _RULE_METHODS:
                 if _looks_like_fact(t):
-                    facts.add(t)
+                    facts.add(_unquote(t))
             elif cur_method in _TERM_ARG_METHODS:
                 pass                    # a term / flag, not a fact
-            elif t.startswith("`"):
-                pass                    # a literal: a term as like as a fact
+            elif t.startswith(("`", '"')):
+                pass                    # a literal or a quoted name: a
+                #                         term as like as a fact
             else:
                 covered = False         # unknown method with bare args
             i += 1

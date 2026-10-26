@@ -76,7 +76,7 @@ from isabelle_query import graph
 from isabelle_query.model import Entry, TheorySection
 from isabelle_query.parsing import (
     ISA_SYMBOL, ISA_WORD_CHAR, LETTER_SYMS, PROOF_COMMANDS, PROOF_RE,
-    _PROOF_INLINE_RE, _balanced_end)
+    SYM_IDENT, _PROOF_INLINE_RE, _balanced_end)
 from isabelle_query.graph import (
     CLOSING_KEYWORDS as _CLOSING_KEYWORDS,
     CONTEXT_KEYWORDS as _CONTEXT_KEYWORDS,
@@ -308,8 +308,9 @@ class Step:
 # `have key [simp]: "P"`, and `obtain x y where key: "P"`, whose label comes
 # after `where`.  A name is what the citation extractor reads as one
 # (`graph._FACT_TOK_RE`): it may start with a digit or a symbol (`1:`,
-# `\<Phi>:`).  `x :: nat` is no label: the colon may not be doubled.
-_LABEL_NAME = rf"{ISA_WORD_CHAR}(?:{ISA_SYMBOL}|[\w'.])*"
+# `\<Phi>:`), or be a symbolic identifier (`*:`, `$:`, #35).  `x :: nat` is
+# no label: the colon may not be doubled.
+_LABEL_NAME = rf"(?:{ISA_WORD_CHAR}(?:{ISA_SYMBOL}|[\w'.])*|{SYM_IDENT})"
 _STEP_LABEL_RE = re.compile(
     r"\b(?:have|show|hence|thus|obtain|consider|interpret|where)\s+"
     rf"({_LABEL_NAME})\s*(?:\[[^\]]*\])?\s*:(?!:)")
@@ -367,9 +368,10 @@ is no as-written statement to measure.
 
 # A statement label, `key:`, `key [simp]:` or `[simp]:` — the forms Isar's
 # `thm_bind` admits, short of attributes nested inside attributes.  A name
-# may be symbolic (`\<Phi>:`), numeric (`1:`) or a star (`*:`, `**:`).
-_WRAP_LABEL = (rf"(?:(?:(?:{ISA_WORD_CHAR}|\.)+|\*+)\s*(?:\[[^\]]*\])?"
-               r"|\[[^\]]*\])\s*:(?!:)")
+# may be symbolic (`\<Phi>:`), numeric (`1:`) or a symbolic identifier
+# (`*:`, `**:`, `$:`).
+_WRAP_LABEL = (rf"(?:(?:(?:{ISA_WORD_CHAR}|\.)+|{SYM_IDENT})"
+               r"\s*(?:\[[^\]]*\])?|\[[^\]]*\])\s*:(?!:)")
 # A goal command whose line ENDS at the command (with an optional label), which
 # is what makes looking ahead safe: `show ?thesis` has a remainder and stays
 # bare, `have` and `from p have b:` do not.  `also` / `finally` are excluded —
@@ -471,7 +473,8 @@ def _statement_wrapped(lines: list[str], start_idx: int,
 # continue a calculation; `interpret` instantiates a locale.
 _NO_PROPOSITION_CMDS = frozenset({"also", "finally", "interpret"})
 # What follows the command, once its own name and any label are gone.
-_STEP_LABEL_HEAD_RE = re.compile(r"^[A-Za-z][\w'.]*\s*(?:\[[^\]]*\])?\s*:(?!:)")
+_STEP_LABEL_HEAD_RE = re.compile(
+    rf"^(?:[A-Za-z][\w'.]*|{SYM_IDENT})\s*(?:\[[^\]]*\])?\s*:(?!:)")
 # The proof tail that may follow an UNDELIMITED proposition on the same line.
 # `show False by simp` states `False`; the rest is the discharge.
 _PROOF_TAIL_WORDS = frozenset({
@@ -1081,9 +1084,11 @@ _THIS_CHAIN_WORDS = frozenset({
 })
 
 # Label on a context / plumbing introduction: `note l = ...`, `assume l: ...`,
-# `case l`.  (Goal-step labels are already parsed into `Step.label`.)
+# `case l`, and a symbolic `assume *:` (#35).  (Goal-step labels are already
+# parsed into `Step.label`.)
 _INTRO_LABEL_RE = re.compile(
-    r"^(?:note|assume|presume|case)\s+\(?\s*([A-Za-z][\w'.]*)\s*[:=]")
+    r"^(?:note|assume|presume|case)\s+\(?\s*"
+    rf"([A-Za-z][\w'.]*|{SYM_IDENT})\s*[:=]")
 
 
 def introduces(step: Step) -> bool:

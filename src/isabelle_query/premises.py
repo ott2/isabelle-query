@@ -31,7 +31,8 @@ import re
 from dataclasses import dataclass, field
 
 from isabelle_query.model import _GOAL_TAGS, Entry, TheorySection
-from isabelle_query.parsing import _balanced_end, attr_heads
+from isabelle_query.parsing import (
+    SYM_IDENT, SYMBOLIC_KEYWORDS, _balanced_end, attr_heads)
 
 # Isar statement elements (`Pure.thy`, `Parse_Spec.statement`).
 _ELEMENTS = frozenset({"fixes", "constrains", "assumes", "defines", "notes",
@@ -44,6 +45,7 @@ _PROOF_WORDS = frozenset({"by", "proof", "apply", "using", "unfolding",
 # A cartouche delimiter is not part of a word: `shows\<open>P\<close>` is
 # written with no space between them.
 _WORD_RE = re.compile(r"(?:\\<(?!open>|close>)\^?\w+>|[\w'.?])+")
+_SYM_IDENT_RE = re.compile(SYM_IDENT)
 
 
 @dataclass
@@ -96,9 +98,14 @@ def _tokens(s: str) -> list[tuple[str, str]]:
             i = end
         else:
             m = _WORD_RE.match(s, i)
+            sm = None if m else _SYM_IDENT_RE.match(s, i)
             if m and not (m.group() in (".", "..")):
                 out.append(("word", m.group()))
                 i = m.end()
+            elif sm and sm.group() not in SYMBOLIC_KEYWORDS:
+                # `assumes *: "P"` labels its premise `*` (#35).
+                out.append(("word", sm.group()))
+                i = sm.end()
             elif s.startswith("::", i):
                 out.append(("punct", "::"))
                 i += 2

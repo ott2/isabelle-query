@@ -292,6 +292,18 @@ ISA_MARKUP = rf"\\<{_NOT_STRUCTURAL}\^?\w+>"
 ISA_WORD_CHAR = rf"(?:{ISA_SYMBOL}|[\w'])"
 ISA_NAME_CHAR = rf"(?:{ISA_MARKUP}|[\w'])"
 SYM_NAME_RE = re.compile(rf"((?:{ISA_MARKUP}|\w){ISA_NAME_CHAR}*)")
+# A symbolic identifier, which Isar's `name` admits as well (#35): a run of
+# `!#$%&*+-/<=>?@^_|~` (`Lexicon.scan_symid`), so `have *: "P"` labels a fact
+# `*`.  Over the Isabelle2025-2 AFP about 12,500 labels are spelled so, mostly
+# `*`, `**`, `***`, then `$`, `#`, `++` (`scripts/probe_symbolic_labels.py`).
+# It may not start with `_`, which a word already takes.
+SYM_IDENT = r"[!#$%&*+\-/<=>?@^|~][!#$%&*+\-/<=>?@^_|~]*"
+# Pure's symbolic keywords, and `=`.  The lexer takes a keyword over a
+# symbolic identifier of the same length, so these never name a fact: they
+# are method combinators (`(rule r)+`, `simp?`), a separator (`|`) or syntax
+# (`note a = b`).
+SYMBOLIC_KEYWORDS = frozenset({"!", "!!", "+", "<", "<=", "=", "==", "=>",
+                               "?", "|"})
 # Greek + variant **letter** symbols: these are identifier characters (a
 # `\<Gamma>` context, an `\<alpha>` ordinal), NOT operators — `shape`'s
 # tokeniser keeps `\<alpha>` as a bare `\<sym>` because `_is_name` gates on an
