@@ -294,8 +294,22 @@ in `CONTRIBUTING.md`.
       - Cost: the search is one regex pass per theory, about 6% of a
         whole-AFP `summary` (7.4% before `_prefix_trie`, at load
         average 2.7).  Re-measure on a quiet machine with
-        `scripts/probe_summary_parts.py`; a cheaper search would have to
-        ride on an existing pass rather than scan the text again.
+        `scripts/probe_summary_parts.py`.
+      **No existing pass carries the search for free** (read, not timed).
+      The tokenizer (`_scan_nonisar_spans`) jumps between region delimiters
+      and never visits outer words; adding the keywords to `_SCAN_RE` would
+      slow every line, in the highest-risk code.  `_structural_command_lines`
+      reads first tokens only.  The one natural host is `_block_stacks`: the
+      same outer view, already walked positionally within a line.  Folding
+      `_mid_decls` into it, and giving a mid-line entry the stack at its
+      COLUMN rather than `stacks[thy_line - 1]`, fixes the first bullet and
+      makes two walks one.  Both read the whole outer view, so one scan up
+      front can feed both.  Do not expect it to buy the 6% back: the cost is
+      `_DECL_WORD_RE` matching itself, which a merged pass still runs, and
+      `_block_stacks` is cheap only because its `"begin" in line`
+      prefilter skips almost every line, a shortcut declaration keywords
+      would remove.  So frame it as a correctness fix, column-precise
+      blocks, and time it, rather than as a speedup.
 
 ## Done
 
