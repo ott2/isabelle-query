@@ -277,6 +277,18 @@ in `CONTRIBUTING.md`.
         `unused facts --spans` says `unclosed` there; that is by design
         [early-end], and `scripts/probe_early_end.py` lists them.
 
+- [ ] `[fact-methods]` Two fact-taking method shapes the fan-in walk
+      (`graph._cited_facts_on_line`) does not read, found measuring #35:
+      - `insert` and `fact` take facts but are not in `_RULE_METHODS`, so
+        `insert foo` and `by (fact foo)` cite nothing and mark the goal's
+        method coverage failed.  61 AFP lines with a symbolic label alone
+        (`insert *`, `fact *`); the named population is unmeasured.
+      - `only:` is not in `_FACT_MARKER_WORDS`, so `simp only: a b` cites
+        nothing, named or symbolic.
+      Each moves M5a, so measure it whole-AFP with
+      `scripts/probe_fact_literals.py` and `scripts/diff_census_fields.py`
+      before and after, as #35 did.
+
 - [ ] `[midline-decl]` What the mid-line declaration fix (#29) leaves.
       Extent at AFP tag Isabelle2025-2 unless stated:
       - Block structure is per line: an entry's `blocks` is the stack at
