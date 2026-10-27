@@ -1202,9 +1202,11 @@ CLOSING_KEYWORDS = frozenset({
 _CITE_LIST_WORDS = frozenset({"from", "with", "using", "unfolding"})
 # A fact list runs until a goal/closing keyword (`from a have`, `using a by`) —
 # or until the *next* cite keyword, so a chain (`using X unfolding Y`) ends the
-# first list rather than swallowing `unfolding` as one of X's facts.
+# first list rather than swallowing `unfolding` as one of X's facts.  `and`
+# does not end it (#36): Isar reads a fact list as `and`-separated groups, so
+# `from a and b` is `from a b`.  `have A and B` is a goal's, after `have`.
 _FACT_LIST_STOP = (GOAL_KEYWORDS | CLOSING_KEYWORDS | _CITE_LIST_WORDS
-                   | {"proof", "and"})
+                   | {"proof"})
 
 # Methods whose *bare* (colon-free) arguments are fact names, not terms/flags:
 # `by (rule conjI)`, `by (metis a b)`, `by (unfold d)`, `by (smt (z3) a b)`.
@@ -1457,7 +1459,7 @@ def _cited_facts_on_line(line: str) -> tuple[set[str], bool]:
                     continue
                 if tj in _STRUCTURAL:
                     break
-                if _looks_like_fact(tj):
+                if tj != "and" and _looks_like_fact(tj):
                     facts.add(_unquote(tj))
                 j += 1
             i = j
