@@ -60,6 +60,15 @@ proof -
   show ?thesis using * and ** by simp
 qed
 
+lemma local_nested:
+  assumes "A" "B" and r: "A \<Longrightarrow> B \<Longrightarrow> A \<and> B"
+  shows "A \<and> B"
+proof -
+  have a: "A" using assms(1) by simp
+  have b: "B" using assms(2) by simp
+  from r[OF a[simplified] b] show ?thesis .
+qed
+
 end
 '''
 
@@ -80,7 +89,8 @@ def _cited(line):
 class TheIssueCase(unittest.TestCase):
 
     def test_fanin_mean(self):
-        for name, want in (("plain", 2.0), ("with_and", 2.0)):
+        for name, want in (("plain", 2.0), ("with_and", 2.0),
+                           ("nested_attribute", 3.0), ("flat_OF", 3.0)):
             with self.subTest(name):
                 self.assertEqual(_fanin_mean(name), want)
 
@@ -109,6 +119,31 @@ class AndSeparatesFacts(unittest.TestCase):
         self.assertEqual(
             [b.name for _, b in proof_locals.unread_locals([sec])
              if b.entry == "local_and"], [])
+
+
+class ANestedAttribute(unittest.TestCase):
+
+    def test_resumes_the_outer_list(self):
+        for line, want in (("from r[OF a[simplified] b] show x",
+                            {"r", "a", "b"}),
+                           ("by (rule r[OF a[of x] b])", {"r", "a", "b"}),
+                           ("using r[OF a[THEN t] b] by simp",
+                            {"r", "a", "t", "b"}),
+                           ("using r[THEN s[OF a] t] by simp",
+                            {"r", "s", "a", "t"}),
+                           ("using r[OF a, simplified] b by simp",
+                            {"r", "a", "b"})):
+            with self.subTest(line):
+                self.assertEqual(_cited(line), want)
+
+    def test_unused_facts_reads_it(self):
+        sec = section_from(SRC, theory="Fl")
+        self.assertEqual(
+            [b.name for _, b in proof_locals.unread_locals([sec])
+             if b.entry == "local_nested"], [])
+
+    def test_a_term_attribute_still_cites_nothing(self):
+        self.assertEqual(_cited("using r[of a[x] b] by simp"), {"r"})
 
 
 if __name__ == "__main__":

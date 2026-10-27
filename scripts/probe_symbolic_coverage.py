@@ -6,10 +6,11 @@ Loads a second copy of `graph.py` (the old fact walk, e.g. from
 reads every step's command text with both, and reports:
 
   * the facts gained and lost, pooled by kind (symbolic, quoted, other);
-  * every line whose method coverage changed, up to `--show`.
+  * every line whose method coverage changed, up to `--show`;
+  * every line that gained a fact, up to `--gains` (default none).
 
     python scripts/probe_symbolic_coverage.py OLD_GRAPH_PY [ROOT]
-        [--limit=N] [--show=N]
+        [--limit=N] [--show=N] [--gains=N]
 
 `--limit=N` takes an ALPHABETICAL PREFIX of the sessions, not a sample.
 """
@@ -53,6 +54,7 @@ def main() -> int:
                if a.startswith("--") and "=" in a)
     limit = int(opt.get("--limit", 0)) or None
     show = int(opt.get("--show", 40))
+    gains = int(opt.get("--gains", 0))
     sessions = iter_sessions(root)
     if limit:
         sessions = sessions[:limit]
@@ -60,7 +62,7 @@ def main() -> int:
     gained: Counter[str] = Counter()
     lost: Counter[str] = Counter()
     cov: Counter[str] = Counter()
-    shown = 0
+    shown = gain_shown = 0
     for session in sessions:
         try:
             secs = sections_for_session(session, seen)
@@ -78,6 +80,10 @@ def main() -> int:
                     f1, c1 = graph._cited_facts_on_line(s.src)
                     for f in f1 - f0:
                         gained[_kind(f, s.src)] += 1
+                    if f1 - f0 and gain_shown < gains:
+                        gain_shown += 1
+                        print(f"+{sorted(f1 - f0)} {sec.path.name}:{s.line}"
+                              f"  {s.src.strip()[:110]}")
                     for f in f0 - f1:
                         lost[_kind(f, s.src)] += 1
                     if c0 != c1:

@@ -1380,23 +1380,23 @@ def _consume_attr_block(toks: list[str], i: int, facts: set[str]) -> int:
     ``symmetric``, a bare declaration) contributes nothing, so its inner tokens
     — bound variables, ``\<phi>``, ``and``, numerals — no longer leak as facts.
 
-    Returns the index just past the matching ``]``.  Nested brackets are tracked
-    by depth; a comma resets to the next attribute head; a ``NAME:`` sub-marker
-    (``[simplified add: f]``) is skipped so the marker word is not itself read as
-    a fact.
+    Returns the index just past the matching ``]``.  A nested block is a
+    fact's own attribute (``r[OF a[simplified] b]``), so its ``]`` resumes the
+    enclosing list rather than ending it (#36); a comma resets to the next
+    attribute head; a ``NAME:`` sub-marker (``[simplified add: f]``) is skipped
+    so the marker word is not itself read as a fact.
     """
     n = len(toks)
-    depth = 0
+    outer: list[bool] = []           # each enclosing block's `take`
     take = False                     # inside a fact-composing attribute
     while i < n:
         t = toks[i]
         if t == "[":
-            depth += 1
+            outer.append(take)
             take = False
         elif t == "]":
-            depth -= 1
-            take = False
-            if depth == 0:
+            take = outer.pop()
+            if not outer:
                 return i + 1
         elif t in _ATTR_FACT_WORDS:
             take = True
