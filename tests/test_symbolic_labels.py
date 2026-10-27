@@ -20,7 +20,7 @@ from isabelle_query import proof_locals, shape  # noqa: E402
 from isabelle_query.graph import _cited_facts_on_line  # noqa: E402
 from isabelle_query.premises import statement_of  # noqa: E402
 
-# The issue's two fixtures.
+# The issue's two fixtures, then #37's: a terminal `.` or `..` glued on.
 SRC = r'''theory Sy imports Main
 begin
 
@@ -116,6 +116,34 @@ lemma unread_symbolic:
 proof -
   have $: "A" using * by simp
   show "A" using * by simp
+qed
+
+lemma named_glued:
+  assumes "A" shows "A"
+proof -
+  have a: "A" using assms by simp
+  show ?thesis using a.
+qed
+
+lemma sym_spaced:
+  assumes "A" shows "A"
+proof -
+  have *: "A" using assms by simp
+  show ?thesis using * .
+qed
+
+lemma sym_glued:
+  assumes "A" shows "A"
+proof -
+  have *: "A" using assms by simp
+  show ?thesis using *.
+qed
+
+lemma sym_glued_rule:
+  assumes "A" shows "A"
+proof -
+  have *: "A" using assms by simp
+  show ?thesis unfolding *..
 qed
 
 end
@@ -247,6 +275,16 @@ class TheOtherReaders(unittest.TestCase):
         self.assertEqual([n for e, n in rows if e == "method_text"], [])
         # Glued to a marker's colon, or before a `;`.
         self.assertEqual([n for e, n in rows if e == "glued"], [])
+
+    def test_a_glued_terminal_proof_ends_the_name(self):
+        # `.` is no symbolic character: `using *.` is `*` then `.` (#37).
+        sec = section_from(SRC, theory="Sy")
+        rows = {b.entry for _, b in proof_locals.unread_locals([sec])}
+        for entry in ("named_glued", "sym_spaced", "sym_glued",
+                      "sym_glued_rule"):
+            with self.subTest(entry):
+                self.assertNotIn(entry, rows)
+                self.assertEqual(_fanin(entry), [1, 1])
 
 
 if __name__ == "__main__":

@@ -93,12 +93,15 @@ _NAME = rf"{_LETTER}(?:{_LETTER}|[0-9_']|\\<\^sub>)*"
 # too [numeral-label]: Isar's `name` admits `nat`, so `assumes 1: "P"` binds
 # and `using 1` reads, as do case facts `1.prems` (#32).  So is a symbolic
 # identifier standing alone, `assumes *:` and `using * **` (#35), though a
-# keyword so spelled is not (:func:`_is_name`).  This is the outer view,
-# where a numeral in a term is already blank.
+# keyword so spelled is not (:func:`_is_name`).  `.` is no symbolic
+# character, so `using *.` is `*` and the terminal proof `.` (#37), as `using
+# a.` is `a` and `.`.  This is the outer view, where a numeral in a term is
+# already blank.
 _TOKEN_RE = re.compile(
     rf"(\?{_NAME})|({_NAME}(?:\.{_NAME})*)|([0-9]+(?![\w'])(?:\.{_NAME})*)"
     rf"|(?P<sym>\\<\^?\w+>)"
-    rf"|((?<![^\s(\[,;:]){SYM_IDENT}(?![^\s:()\[\],;]))"
+    rf"|((?<![^\s(\[,;:]){SYM_IDENT}"
+    rf"(?:(?![^\s:()\[\],;])|(?=\.\.?(?!\S))))"
     rf"|(\.\.|::|[.{{}}()\[\]:=,])")
 _KEYWORD_ALT = "(?:" + "|".join(map(re.escape, SYMBOLIC_KEYWORDS)) + ")"
 # A symbolic name standing alone in a term may be method text's (`use x
