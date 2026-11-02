@@ -269,6 +269,9 @@ class Step:
     stmt_end: int = 0
     stmt_text: str = ""
     label: str = ""  # the step's own fact label (`have key: ...` -> "key")
+    # The labels of its later `and` clauses (`have a: … and b: …` -> ("b",)),
+    # when the step introduces facts (#38).
+    and_labels: tuple[str, ...] = ()
     # The fact-binding command of a goal step (`have`/`hence`/`show`/`thus`/...),
     # which may differ from the leading `kw`: `from a have b:` has kw="from" but
     # goal_cmd="have".  "" for non-goal steps.  Drives M5c introduce/discharge.
@@ -332,6 +335,42 @@ def _step_label(stripped: str, lines: list[str], line: int,
         if m:
             return m.group(1)
     return ""
+
+
+# A later clause's label, `and b:` / `and b [simp]:` (`and b =` for
+# `note`), read in the OUTER view, where a term's `\<and>` is blank.
+# Clauses after `if` / `when` / `for` are the step's own premises, bound
+# in its proof alone (#38).
+_AND_LABEL_RE = {sep: re.compile(
+    rf"(?<![\w'])and\s+({_LABEL_NAME})\s*(?:\[[^\]]*\])?\s*{sep}(?![:=])")
+    for sep in (":", "=")}
+_PREMISES_RE = re.compile(r"(?<![\w'])(?:if|when|for)(?![\w'])")
+# The commands whose `and` clauses introduce facts: `show` / `thus` discharge,
+# and `consider` / `interpret` bind no labelled clause.
+_AND_INTRO_CMDS = frozenset({"have", "hence", "obtain",
+                             "assume", "presume", "note"})
+
+
+def _and_labels(outer: list[str], commands: list[Command], k: int,
+                end: int, cmd: str) -> tuple[str, ...]:
+    """The labels of command ``k``'s later `and` clauses: its text runs
+    from its own start to the next command's, or to line ``end``."""
+    if cmd not in _AND_INTRO_CMDS:
+        return ()
+    c = commands[k]
+    nxt = commands[k + 1] if k + 1 < len(commands) else None
+    last, stop = (nxt.line, nxt.col) if nxt else (end, None)
+    if last == c.line:
+        text = outer[c.line - 1][c.col:stop]
+    else:
+        text = "\n".join([outer[c.line - 1][c.col:],
+                          *outer[c.line:last - 1],
+                          outer[last - 1][:stop]])
+    m = _PREMISES_RE.search(text)
+    if m:
+        text = text[:m.start()]
+    sep = "=" if cmd == "note" else ":"
+    return tuple(_AND_LABEL_RE[sep].findall(text))
 
 
 def _extract_statement(lines: list[str], start_idx: int,
@@ -796,7 +835,7 @@ def _scan_steps(sec: TheorySection, entry: Entry,
     # `subgoal` (prf_script_goal) opens a goal that its own terminal method
     # closes; counted so that method does not close the goal around it.
     open_subgoals = 0
-    for c in commands:
+    for k, c in enumerate(commands):
         if c.kw == "subgoal":
             open_subgoals += 1
             continue
@@ -832,6 +871,7 @@ def _scan_steps(sec: TheorySection, entry: Entry,
                       label=_step_label(stripped, lines, c.line, s_start),
                       goal_cmd=_goal_command(stripped), block=cur_block,
                       method=method, col=c.col, src=text)
+            st.and_labels = _and_labels(outer, commands, k, end, st.goal_cmd)
             # Classified here, where the command's own text is still in hand:
             # `bare_kind` reads the command prefix, and reconstructing it later
             # from `Step.line` would be a second parse to keep in step.
@@ -841,7 +881,9 @@ def _scan_steps(sec: TheorySection, entry: Entry,
             steps.append(Step(sec.theory, entry.name, c.line, step_depth,
                               c.kw, kind, block=cur_block, method=method,
                               col=c.col, src=text,
-                              closes_subgoal=closes_subgoal))
+                              closes_subgoal=closes_subgoal,
+                              and_labels=_and_labels(outer, commands, k,
+                                                     end, c.kw)))
         # A `proof`/`{` opener deepens *subsequent* commands and opens a block.
         if c.kw in ("proof", "{"):
             open_blocks += 1
@@ -1131,20 +1173,27 @@ def _consumes(step: Step, lines: list[str]) -> bool:
     return bool(_line_facts(step, lines)[0]) and not step.credited
 
 
-def _intro_fact_name(step: Step, line: str) -> str:
-    """The *named* fact ``step`` introduces, or ``""`` for an anonymous one.
+def _intro_fact_names(step: Step, line: str) -> list[str]:
+    """The *named* facts ``step`` introduces, in order; ``[]`` for anonymous
+    ones.
 
-    Goal introductions carry their name in ``Step.label``; context / plumbing
-    introductions (`note l =`, `assume l:`, `case l`) are parsed from the line.
-    An unlabelled `have "P"` / `assume "P"` introduces an anonymous fact — it
-    binds ``this`` but nothing a later step can cite by name, so it is untracked.
+    Goal introductions carry their first name in ``Step.label``; context /
+    plumbing introductions (`note l =`, `assume l:`, `case l`) are parsed
+    from the line.  Each later `and` clause's name is in ``Step.and_labels``
+    (#38), and may be the only one: `have "P" and b: "Q"`.  An unlabelled
+    `have "P"` / `assume "P"` introduces an anonymous fact — it binds ``this``
+    but nothing a later step can cite by name, so it is untracked.
     """
     if step.kind == "goal":
-        return step.label if step.goal_cmd in _GOAL_INTRO_CMDS else ""
-    if introduces(step):
+        if step.goal_cmd not in _GOAL_INTRO_CMDS:
+            return []
+        first = step.label
+    elif introduces(step):
         m = _INTRO_LABEL_RE.match(line.strip())
-        return m.group(1) if m else ""
-    return ""
+        first = m.group(1) if m else ""
+    else:
+        return []
+    return [first] * bool(first) + list(step.and_labels)
 
 
 def _fact_intervals(steps: list[Step],
@@ -1159,22 +1208,23 @@ def _fact_intervals(steps: list[Step],
     """
     births: dict[str, int] = {}
     deaths: dict[str, int] = {}
-    current_this: str | None = None   # named fact bound to `this`, or None
+    current_this: list[str] = []      # named facts bound to `this`
     for i, s in enumerate(steps):
         cited, _ = _line_facts(s, lines)
         for name in cited:
             if name in births:
                 deaths[name] = i
-        if (s.kw in _THIS_CHAIN_WORDS or "this" in cited) \
-                and current_this in births:
-            deaths[current_this] = i
-        name = _intro_fact_name(s, s.src or lines[s.line - 1])
-        if name:
-            births.setdefault(name, i)
-            deaths.setdefault(name, i)
-            current_this = name
+        if s.kw in _THIS_CHAIN_WORDS or "this" in cited:
+            for name in current_this:
+                deaths[name] = i
+        names = _intro_fact_names(s, s.src or lines[s.line - 1])
+        if names:
+            for name in names:
+                births.setdefault(name, i)
+                deaths.setdefault(name, i)
+            current_this = names
         elif s.kind == "goal":
-            current_this = None       # an anonymous goal rebinds `this` unnamed
+            current_this = []         # an anonymous goal rebinds `this` unnamed
     return births, deaths
 
 
