@@ -361,11 +361,14 @@ def _and_labels(outer: list[str], commands: list[Command], k: int,
     nxt = commands[k + 1] if k + 1 < len(commands) else None
     last, stop = (nxt.line, nxt.col) if nxt else (end, None)
     if last == c.line:
-        text = outer[c.line - 1][c.col:stop]
+        parts = [outer[c.line - 1][c.col:stop]]
     else:
-        text = "\n".join([outer[c.line - 1][c.col:],
-                          *outer[c.line:last - 1],
-                          outer[last - 1][:stop]])
+        parts = [outer[c.line - 1][c.col:], *outer[c.line:last - 1],
+                 outer[last - 1][:stop]]
+    # Most introductions have no `and`: no clause to read.
+    if not any("and" in p for p in parts):
+        return ()
+    text = "\n".join(parts)
     m = _PREMISES_RE.search(text)
     if m:
         text = text[:m.start()]
