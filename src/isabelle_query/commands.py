@@ -630,15 +630,17 @@ def cmd_defs(sections: list[TheorySection], theory: str,
         _fail_subject(f"no theory '{theory}'")
         return
     matches = [e for e in sec.entries if e.tag in _DEFINITION_TAGS]
-    if not matches:
-        print(f"No definitions found in '{sec.theory}'.")
-        return
+    # Before the empty guard [count-mode-zero]: no definitions is the count
+    # 0, and in `--names` an empty list.
     if flags.mode == "count":
         print(len(matches))
         return
     if flags.mode == "names":
         for e in matches:
             print(_format_name_line(sec, e))
+        return
+    if not matches:
+        print(f"No definitions found in '{sec.theory}'.")
         return
     for e in matches:
         print(render_entry(sec, e))

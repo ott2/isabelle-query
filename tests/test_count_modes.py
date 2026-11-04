@@ -74,6 +74,17 @@ class AnHonestZeroPrintsZero(unittest.TestCase):
         out = run(commands._render_unused, [], CmdFlags(mode="count"), False)
         self.assertEqual(out, "0")
 
+    def test_defs_of_a_theory_without_definitions(self):
+        thy = section_from(THY.replace("theory T", "theory U")
+                           .replace('definition d :: "nat" where "d = 0"\n',
+                                    ""), "U")
+        self.assertEqual(run(commands.cmd_defs, [thy], "U",
+                             CmdFlags(mode="count")), "0")
+        self.assertEqual(run(commands.cmd_defs, [thy], "U",
+                             CmdFlags(mode="names")), "")
+        self.assertEqual(run(commands.cmd_defs, [thy], "U", CmdFlags()),
+                         "No definitions found in 'U'.")
+
     def test_the_count_is_parseable_as_a_number(self):
         # The whole point: `$(query find X -c)` must be arithmetic.
         for pattern in ("zzz", "d"):
