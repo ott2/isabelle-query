@@ -159,5 +159,39 @@ class CallersTsvNamesEveryRow(SubjectLoop):
         self.assertEqual(self.rows(out), [["base", "3"], ["top", "0"]])
 
 
+class TheTheoryVerbsTakeSeveral(SubjectLoop):
+    """Issue #40: `outline`, and with it `theory` and `defs`, take a list of
+    theories as `deps` and `uses` do, on the same spine."""
+
+    def setUp(self):
+        super().setUp()
+        root = Path(self.root)
+        (root / "B.thy").write_text(
+            "theory B imports A begin\n"
+            "definition d :: nat where \"d = 0\"\n"
+            "lemma b: \"d = 0\" by (simp add: d_def)\nend\n")
+        (root / "ROOT").write_text(
+            "session S = HOL +\n  theories\n    A\n    B\n")
+
+    def test_outline_gives_each_its_header(self):
+        singles = [self.run_cli("outline", t)[1] for t in ("A", "B")]
+        code, out, _ = self.run_cli("outline", "A", "B")
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "\n".join(singles))
+        self.assertEqual(out.count("Outline of "), 2)
+
+    def test_theory_and_defs_counts_align(self):
+        self.assertEqual(self.run_cli("theory", "-c", "A", "B")[1].split(),
+                         ["4", "2"])
+        self.assertEqual(self.run_cli("defs", "-c", "A", "B")[1].split(),
+                         ["0", "1"])
+
+    def test_an_unknown_theory_fails_the_batch(self):
+        for verb in ("outline", "theory", "defs"):
+            code, out, err = self.run_cli(verb, "A", "Bogus")
+            self.assertEqual((code, out), (1, ""), verb)
+            self.assertIn("'Bogus'", err)
+
+
 if __name__ == "__main__":
     unittest.main()

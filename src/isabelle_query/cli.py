@@ -856,10 +856,12 @@ def _run_summary(ns: argparse.Namespace) -> None:
                 totals_only=getattr(ns, "count", False))
 
 def _run_theory(ns: argparse.Namespace) -> None:
-    cmd_theory(_load_sections(ns), ns.name, _flags_from_ns(ns))
+    flags = _flags_from_ns(ns)
+    _run_each(ns, "name", lambda secs, thy: cmd_theory(secs, thy, flags))
 
 def _run_defs(ns: argparse.Namespace) -> None:
-    cmd_defs(_load_sections(ns), ns.theory, _flags_from_ns(ns))
+    flags = _flags_from_ns(ns)
+    _run_each(ns, "theory", lambda secs, thy: cmd_defs(secs, thy, flags))
 
 def _run_deps(ns: argparse.Namespace) -> None:
     _run_each(ns, "theory",
@@ -878,7 +880,8 @@ def _run_refs(ns: argparse.Namespace) -> None:
     _run_each(ns, "theory", lambda secs, thy: cmd_refs(secs, thy, flags))
 
 def _run_outline(ns: argparse.Namespace) -> None:
-    cmd_outline(_load_sections(ns), ns.theory, _flags_from_ns(ns))
+    flags = _flags_from_ns(ns)
+    _run_each(ns, "theory", lambda secs, thy: cmd_outline(secs, thy, flags))
 
 def _run_enclosing(ns: argparse.Namespace) -> None:
     # No PATH positionals: the FILE is baked into each FILE:LINE locus, so
@@ -1333,7 +1336,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("theory",
                        help="show all entries for a theory "
                             "(--names for a terse namespace listing)")
-    p.add_argument("name", help="theory name")
+    _add_subject_list_arg(p, cmd="theory", metavar="THEORY",
+                          noun="theory name or .thy path")
     _add_names_flag(p, "list the theory's namespace entries terse "
                        "(name, tag, line; no bodies) — one per line")
     _add_count_flag(p, "just print the entry count")
@@ -1346,7 +1350,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("defs",
                        help="list definitions in a theory "
                             "(--names for terse name listing)")
-    p.add_argument("theory", help="theory name")
+    _add_subject_list_arg(p, cmd="defs", dest="theory", metavar="THEORY",
+                          noun="theory name or .thy path")
     _add_names_flag(p, "list definition names terse (name, tag, line)")
     _add_count_flag(p, "just print the definition count")
     p.set_defaults(func=_run_defs)
@@ -1408,7 +1413,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # outline
     p = sub.add_parser("outline", help="section structure with entries")
-    p.add_argument("theory", help="theory name")
+    _add_subject_list_arg(p, cmd="outline", dest="theory", metavar="THEORY",
+                          noun="theory name or .thy path")
     _add_comment_flags(p)
     _add_context_flag(p)
     p.set_defaults(func=_run_outline)
