@@ -2229,22 +2229,17 @@ def _dead_marked(graph: CallGraph, dead: dict[str, int],
     Without `-r` that is the uncited ones.  With it, also those whose every
     citer is dead — but nothing cascades THROUGH them: an entry with evidence
     is still live for the entries it cites, which is the `--keep`
-    behaviour."""
+    behaviour.  That holds when the entry cited has evidence too (#41): a
+    headline theorem cited only by an uncited corollary is cited by a live
+    entry, so it is not listed, nor is anything below it.  `dead` holds
+    only entries without evidence, so one pass is the whole answer."""
     out: dict[str, int] = {}
-    changed = True
-    while changed:
-        changed = False
-        for n in marks:
-            if n in out:
-                continue
-            cs = graph.callers.get(n, set())
-            if not cs:
-                out[n] = 0
-            elif recursive and all(c in dead or c in out for c in cs):
-                out[n] = 1 + max(dead.get(c, out.get(c, 0)) for c in cs)
-            else:
-                continue
-            changed = True
+    for n in marks:
+        cs = graph.callers.get(n, set())
+        if not cs:
+            out[n] = 0
+        elif recursive and cs <= dead.keys():
+            out[n] = 1 + max(dead[c] for c in cs)
     return out
 
 

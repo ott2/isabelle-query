@@ -103,6 +103,73 @@ class EvidencePerLeaf(unittest.TestCase):
             self.assertEqual(cli._flags_from_ns(ns).evidence, "hide")
 
 
+CHAIN = """\
+theory Chain
+  imports Main
+begin
+
+lemma base: "True"
+  by simp
+
+theorem mid: "True"
+  by (rule base)
+
+theorem head: "True"
+  by (rule mid)
+
+corollary cor: "True"
+  by (rule head)
+
+theorem t2: "True"
+  by simp
+
+lemma sc: "True"
+  by (rule t2)
+
+end
+"""
+
+
+class EvidenceEndsTheCascade(unittest.TestCase):
+    """Issue #41: an entry with evidence is live for the entries it cites,
+    and that includes entries that carry evidence of their own.  `cor` is
+    uncited, but `head` is a theorem it cites, so `head` is not dead, nor is
+    anything below it.  `t2` is a theorem cited only by `sc`, a dead plain
+    lemma, so it is listed at depth 1: the one way an entry with evidence
+    joins the cascade."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        (d / "Chain.thy").write_text(CHAIN, encoding="utf-8")
+        (d / "ROOT").write_text("session C = HOL +\n  theories Chain\n",
+                                encoding="utf-8")
+        cli._ROOT_OVERRIDE = d
+        self.sections = cli.load_index()
+
+    def tearDown(self):
+        cli._ROOT_OVERRIDE = None
+        self._tmp.cleanup()
+
+    def rows(self, **kw):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            commands.cmd_unused(self.sections, CmdFlags(**kw))
+        return {ln.split()[1]: " ".join(ln.split())
+                for ln in buf.getvalue().splitlines() if "lines)" in ln}
+
+    def test_a_theorem_cited_by_a_theorem_is_live(self):
+        rows = self.rows(recursive=True)
+        self.assertEqual(sorted(rows), ["cor", "sc", "t2"])
+        self.assertNotIn("cascade depth", rows["cor"])
+        self.assertIn("[cascade depth 1]", rows["t2"])
+
+    def test_it_agrees_with_keep(self):
+        # Keeping the corollary by name leaves the same cascade below it.
+        rows = self.rows(recursive=True, keep=frozenset({"cor"}))
+        self.assertEqual(sorted(rows), ["sc", "t2"])
+
+
 BASE = """\
 theory Base
   imports Main
