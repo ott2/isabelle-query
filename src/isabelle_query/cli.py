@@ -718,6 +718,21 @@ def _add_subject_list_arg(p: argparse.ArgumentParser, *, cmd: str,
     p.add_argument(dest, nargs="+", metavar=metavar, help=help_text)
 
 
+def _add_edge_format_flag(p: argparse.ArgumentParser, noun: str,
+                          locus: str) -> None:
+    """`-f tsv` for the two directions of the citation graph [callers-tsv]
+    [callees-tsv].  One spelling and one column list, so one parser reads
+    `callers` and `callees` alike; only the neighbour's noun and what its
+    locus points at differ."""
+    p.add_argument("-f", "--format", dest="out_format",
+                   choices=("text", "tsv"), default="text",
+                   help=f"tsv: one row per {noun}, every row naming its "
+                        f"subject, no header -- subject, {noun}, tag, "
+                        f"theory, session, depth, locus (locus: {locus}).  "
+                        "With -c, `subject<TAB>count`.  Several subjects "
+                        "make one table, not blocks")
+
+
 def _add_verbatim_flag(p: argparse.ArgumentParser) -> None:
     # `p` may be a parser or a mutually-exclusive group (both expose
     # add_argument), so `show` can pair this with `--statement` in one group.
@@ -914,7 +929,8 @@ def _run_callers(ns: argparse.Namespace) -> None:
 
 def _run_callees(ns: argparse.Namespace) -> None:
     flags = _flags_from_ns(ns)
-    _run_each(ns, "name", lambda secs, n: cmd_callees(secs, n, flags))
+    _run_each(ns, "name", lambda secs, n: cmd_callees(secs, n, flags),
+              sep="" if flags.fmt == "tsv" else "\n")
 
 # `THEORY:NAME` — an entry selector for `unused --locals`, the one place a PATH
 # may name an entry rather than a line window.
@@ -1534,12 +1550,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         "affects the non-recursive form; "
                         "transitive closure via -r ignores this flag.")
     _add_reach_flag(p)
-    p.add_argument("-f", "--format", dest="out_format",
-                   choices=("text", "tsv"), default="text",
-                   help="tsv: one row per caller, every row naming its "
-                        "subject, no header -- subject, caller, tag, theory, "
-                        "session, depth, locus.  With -c, `subject<TAB>count`. "
-                        "Several subjects make one table, not blocks")
+    _add_edge_format_flag(p, "caller", "the caller's citing line; under -r "
+                          "its declaration")
     p.set_defaults(func=_run_callers)
 
     # callees
@@ -1559,6 +1571,7 @@ def _build_parser() -> argparse.ArgumentParser:
                         "non-recursive form; transitive closure via -r "
                         "ignores this flag.")
     _add_reach_flag(p)
+    _add_edge_format_flag(p, "callee", "the callee's declaration")
     p.set_defaults(func=_run_callees)
 
     # grep

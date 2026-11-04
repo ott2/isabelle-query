@@ -35,7 +35,7 @@ query find <regex>         # search entry names (--statement: search statements;
 query show <name>          # a named entry's declaration + body (--premises: just what it assumes)
 query enclosing FILE:LINE  # which entry + proof block owns a line; inverse of outline
 query callers <name> [-r]  # who references a name  (reverse; -r = transitive; -f tsv: a table)
-query callees <name> [-r]  # what a name references (forward)
+query callees <name> [-r]  # what a name references (forward; -f tsv: the same table)
 query deps <theory> [-r]   # what a theory imports  (forward; reverse: uses)
 query refs <theory>        # what a theory cites, by owning theory (citation-level)
 query graph [citation|imports]  # the whole graph as JSON (-f dot for Graphviz)

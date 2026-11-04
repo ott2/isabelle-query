@@ -96,6 +96,18 @@ class TheVisibleDeclaration(Fixture):
     def test_name_mode_lists_every_declaration(self):
         self.assertEqual(self.rows("pass_lemma", reach="name"), [ARMS, GUESS])
 
+    def test_tsv_rows_are_the_visible_declarations(self):
+        # Issue #43: the TSV row is the text row's declaration, nearest first.
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            for name in ("pass_lemma", "near_lemma"):
+                commands.cmd_callees(self.sections, name, CmdFlags(fmt="tsv"))
+        self.assertEqual(out.getvalue().splitlines(), [
+            "pass_lemma\ttape\tDEF\tGuess\tDemo\t1\tGuess:4",
+            "near_lemma\ttape\tDEF\tGuess\tDemo\t1\tGuess:4",
+            "near_lemma\ttape\tDEF\tArms\tDemo\t1\tArms:4",
+        ])
+
     def test_external_asks_the_visible_declaration(self):
         # `local_use` cites its own theory's `tape`; first-wins called it
         # cross-theory because `Arms` is not `Guess`.

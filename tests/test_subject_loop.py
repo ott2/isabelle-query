@@ -159,6 +159,46 @@ class CallersTsvNamesEveryRow(SubjectLoop):
         self.assertEqual(self.rows(out), [["base", "3"], ["top", "0"]])
 
 
+class CalleesTsvMirrorsCallers(SubjectLoop):
+    """`callees -f tsv` [callees-tsv], issue #43: the same seven columns, so
+    one parser reads both directions.  The locus is the callee's declaration.
+    The fixture's lines: base 2, mid 3, top 4, other 5."""
+
+    def rows(self, out):
+        return [ln.split("\t") for ln in out.splitlines()]
+
+    def test_direct(self):
+        code, out, _ = self.run_cli("callees", "-f", "tsv", "top")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.rows(out),
+                         [["top", "mid", "LEMMA", "A", "S", "1", "A:3"]])
+
+    def test_the_closure_with_depths(self):
+        _, out, _ = self.run_cli("callees", "-r", "-f", "tsv", "top")
+        self.assertEqual(self.rows(out), [
+            ["top", "mid", "LEMMA", "A", "S", "1", "A:3"],
+            ["top", "base", "LEMMA", "A", "S", "2", "A:2"],
+        ])
+
+    def test_several_subjects_are_one_table(self):
+        _, out, _ = self.run_cli("callees", "-f", "tsv",
+                                 "mid", "base", "other")
+        self.assertEqual(self.rows(out), [
+            ["mid", "base", "LEMMA", "A", "S", "1", "A:2"],
+            ["other", "base", "LEMMA", "A", "S", "1", "A:2"],
+        ])     # base: none
+
+    def test_counts_are_labelled(self):
+        _, out, _ = self.run_cli("callees", "-r", "-c", "-f", "tsv",
+                                 "top", "base")
+        self.assertEqual(self.rows(out), [["top", "2"], ["base", "0"]])
+
+    def test_an_unknown_subject_still_fails_the_batch(self):
+        code, out, err = self.run_cli("callees", "-f", "tsv", "top", "bogus")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("'bogus'", err)
+
+
 class TheTheoryVerbsTakeSeveral(SubjectLoop):
     """Issue #40: `outline`, and with it `theory` and `defs`, take a list of
     theories as `deps` and `uses` do, on the same spine."""

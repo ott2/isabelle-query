@@ -1544,24 +1544,27 @@ def cmd_codeqs(sections: list[TheorySection], name: str,
     _emit_sites(sections, rows, name, "code equation", flags)
 
 
-def _callers_tsv(sections: list[TheorySection], subject: str,
-                 flags: 'CmdFlags', rows: list,
-                 resolve: Callable[[str], Declarations] | None = None,
-                 ) -> None:
-    """`callers -f tsv`: one row per caller, each naming its subject [callers-tsv].
+def _edge_tsv(sections: list[TheorySection], subject: str,
+              flags: 'CmdFlags', rows: list,
+              resolve: Callable[[str], Declarations] | None = None,
+              ) -> None:
+    """`callers -f tsv` and `callees -f tsv`: one row per neighbour, each
+    naming its subject [callers-tsv] [callees-tsv].
 
-    Columns: subject, caller, tag, theory, session, depth, locus.  No header,
-    so several subjects concatenate into one table.  Issue #14: the block
-    output names its subject only when there are no callers, so a script had
-    to attribute blocks by position, and recovered each caller's SESSION by
-    globbing theory files -- a fact query already holds.
+    Columns: subject, neighbour (caller or callee), tag, theory, session,
+    depth, locus.  No header, so several subjects concatenate into one table,
+    and one parser reads both directions.  Issue #14: the block output names
+    its subject only when there are no callers, so a script had to attribute
+    blocks by position, and recovered each caller's SESSION by globbing theory
+    files -- a fact query already holds.  Issue #43 asked the same of
+    `callees`, whose text output a script could only scrape.
 
-    ``rows`` is ``(caller, depth, site)``: ``site`` is ``(section, line,
+    ``rows`` is ``(neighbour, depth, site)``: ``site`` is ``(section, line,
     enclosing entry)`` for a located hit (plain `callers`, depth 1), or None
-    for a closure member
-    (`-r`), which is located at its declaration.  The theory is the locus
-    label, qualified only as far as it must be, so the locus pastes back into
-    `enclosing` like every other locus query prints.
+    for a node located at its declaration: a `callers -r` closure member, and
+    every callee.  The theory is the locus label, qualified only as far as it
+    must be, so the locus pastes back into `enclosing` like every other locus
+    query prints.
 
     A citation no entry owns is tagged TOPLEVEL and named `THEORY:<toplevel>`
     in both modes, with its theory and session filled (issue #15).  Plain mode
@@ -1635,7 +1638,7 @@ def cmd_callers(sections: list[TheorySection], name: str,
                     for n, d in sorted(reachable.items(),
                                        key=lambda x: (x[1], x[0]))
                     if n != name]
-            _callers_tsv(sections, subject, flags, rows, resolve)
+            _edge_tsv(sections, subject, flags, rows, resolve)
             return
         reachable.pop(name, None)
         _render_graph_results(sections, reachable, "caller", name, flags,
@@ -1649,7 +1652,7 @@ def cmd_callers(sections: list[TheorySection], name: str,
         for sec, line_no, _text in hits:
             encl = _enclosing_entry(sec, line_no)
             rows.append((encl.name if encl else None, 1, (sec, line_no, encl)))
-        _callers_tsv(sections, subject, flags, rows)
+        _edge_tsv(sections, subject, flags, rows)
         return
     if flags.mode == "count":
         print(len(hits))
@@ -1723,13 +1726,17 @@ def cmd_callees(sections: list[TheorySection], name: str,
     """Entry-level forward edge: the entries this entry references in
     its proof body (its callees).  Pairs with `cmd_callers` (reverse).
     Not to be confused with the theory-level `deps` / `uses` pair."""
+    tsv = flags.fmt == "tsv"
+    subject = name               # as typed: what a TSV row is attributed to
     graph = _call_graph(sections, flags)
     if name not in graph.all_names:
         bound = _resolve_binding(sections, name)
         if bound is not None:
             parent, how = bound
+            # A note, not an answer: in a table it would be a malformed row.
             print(f"# '{name}' is {how} {parent}; "
-                  f"reporting {parent}'s callees (shared proof body).")
+                  f"reporting {parent}'s callees (shared proof body).",
+                  file=sys.stderr if tsv else None)
             name = parent
         else:
             _fail_subject(f"'{name}' is not in the entry index")
@@ -1739,6 +1746,12 @@ def cmd_callees(sections: list[TheorySection], name: str,
     if flags.recursive:
         reachable = _bfs_depths(lambda n: graph.callees.get(n, set()), {name})
         reachable.pop(name, None)
+        if tsv:
+            _edge_tsv(sections, subject, flags,
+                      [(n, d, None) for n, d in sorted(
+                          reachable.items(), key=lambda x: (x[1], x[0]))],
+                      resolve)
+            return
         _render_graph_results(sections, reachable, "dependency", name, flags,
                               resolve)
         return
@@ -1753,6 +1766,10 @@ def cmd_callees(sections: list[TheorySection], name: str,
         own_theory = by_name.get(name, (None,))[0]
         used = {u for u in used
                 if all(sec.theory != own_theory for sec, _e in resolve(u))}
+    if tsv:
+        _edge_tsv(sections, subject, flags,
+                  [(u, 1, None) for u in sorted(used)], resolve)
+        return
     if flags.mode == "count":
         print(len(used))
         return
