@@ -44,7 +44,8 @@ from isabelle_query.model import (
 )
 from isabelle_layout import parse_thy_imports
 from isabelle_query.parsing import (
-    ISA_SYMBOL, ISA_WORD_CHAR, SYM_IDENT, SYMBOLIC_KEYWORDS, _line_mask)
+    ISA_SYMBOL, ISA_WORD_CHAR, SYM_IDENT, SYM_NAME_RE, SYMBOLIC_KEYWORDS,
+    _line_mask)
 
 
 def _build_line_index(sections: list[TheorySection]
@@ -768,41 +769,126 @@ def site_filter(sections: list[TheorySection], name: str,
     return lambda theory: vis.sees(theory, name)
 
 
-# A fact antiquotation: `@{thm foo}`, `@{thm [display] foo bar}`, `@{thms
-# foo}`, the style forms, and the cartouche spelling `\<^thm>‹foo›`.  Not
-# `@{lemma "P" by simp}`, which states a proposition rather than naming one.
-_AT_ANTIQ_RE = re.compile(
-    r"@\{\s*(?:thm|thms|thm_style|named_thms)\b([^}]*)\}")
-_CART_ANTIQ_RE = re.compile(
-    r"\\<\^(?:thm|thms)>\s*(?:\\<open>|‹)(.*?)(?:\\<close>|›)", re.S)
+# The antiquotations that name a declaration, and so fail the build when it
+# goes [doc-antiq].  FACT kinds name facts: `@{thm foo}`, `@{thm [display]
+# foo bar}`, `@{thms foo}`, the style forms, `\<^thm>‹foo›`.  TERM kinds
+# name constants and types, alone (`@{const foo}`, `@{typ "'a foo"}`,
+# `@{type foo}`) or inside a term (`@{term "foo x"}`).  Not `@{lemma "P" by
+# simp}`, which states a proposition rather than naming one.
+FACT_ANTIQ_KINDS = frozenset({"thm", "thms", "thm_style", "named_thms"})
+TERM_ANTIQ_KINDS = frozenset({"const", "term", "typ", "type"})
+_ANTIQ_START_RE = re.compile(
+    r"@\{\s*(thm_style|named_thms|thms|thm|const|term|typ|type)(?![\w'])"
+    r"|\\<\^(thms|thm|const|term|typ|type)>\s*(?=\\<open>|‹)")
+_OPEN, _CLOSE = ("\\<open>", "‹"), ("\\<close>", "›")
 _ANTIQ_ATTRS_RE = re.compile(r"\[[^\]]*\]")
 _ANTIQ_NAME_RE = re.compile(r"[A-Za-z][\w'.]*")
+# A term's options come first (`@{term [show_types] "x"}`); a later `[` is
+# the term's own list syntax, whose names count.
+_ANTIQ_OPTIONS_RE = re.compile(r"\s*\[[^\]]*\]")
+
+
+def _cartouche_end(text: str, i: int) -> int:
+    """Index just past the cartouche that opens at ``text[i]``, nested
+    cartouches counted; the end of the text if it never closes."""
+    depth = 0
+    n = len(text)
+    while i < n:
+        o = next((o for o in _OPEN if text.startswith(o, i)), None)
+        if o:
+            depth += 1
+            i += len(o)
+            continue
+        c = next((c for c in _CLOSE if text.startswith(c, i)), None)
+        if c:
+            depth -= 1
+            i += len(c)
+            if depth == 0:
+                return i
+            continue
+        i += 1
+    return n
+
+
+def _brace_end(text: str, i: int) -> int:
+    """Index just past the `}` that closes an `@{` body starting at ``i``.
+
+    A `}` inside a string or a cartouche is the body's own, as in `@{term
+    "{x. P x}"}`: 239 `@{term}` and 23 `@{thm}` bodies in afp-devel hold one
+    (`scripts/probe_antiquotations.py`), and a `[^}]*` body stopped there."""
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "}":
+            return i + 1
+        if ch == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+        elif text.startswith(_OPEN, i):
+            i = _cartouche_end(text, i)
+        else:
+            i += 1
+    return n
+
+
+def doc_antiquotations(text: str):
+    """Yield ``(kind, start, end, body)`` for each name-bearing antiquotation
+    in ``text`` [doc-antiq], in either spelling.  Bodies may span lines: the
+    caller passes a whole theory, not a line."""
+    if "@{" not in text and "\\<^" not in text:
+        return
+    for m in _ANTIQ_START_RE.finditer(text):
+        if m.group(1):
+            end = _brace_end(text, m.end())
+            yield m.group(1), m.start(), end, text[m.end():end - 1]
+        else:
+            end = _cartouche_end(text, m.end())
+            yield m.group(2), m.start(), end, text[m.end():end]
+
+
+def antiquotation_names(kind: str, body: str) -> set[str]:
+    r"""The declarations an antiquotation's body names, reduced to graph
+    nodes [doc-antiq].
+
+    A fact name drops its selection and qualifier: `foo(2)` and `Thy.foo`
+    are `foo`, and its attributes (`[OF bar]`) are not read.  A term is read
+    with query's name atom, `parsing.SYM_NAME_RE`, so `foo\<^sub>1` is not
+    `foo`; every name it holds counts, which over-reads a bound variable
+    that shares a constant's name.  That errs towards keeping an entry,
+    the safe side for a deletion check.  A type variable (`'a`) and a
+    schematic one (`?x`) name nothing."""
+    if kind in FACT_ANTIQ_KINDS:
+        return {n.split("(", 1)[0].rsplit(".", 1)[-1]
+                for n in _ANTIQ_NAME_RE.findall(_ANTIQ_ATTRS_RE.sub(" ", body))}
+    body = _ANTIQ_OPTIONS_RE.sub(" ", body, count=1) \
+        if _ANTIQ_OPTIONS_RE.match(body) else body
+    return {m.group(1) for m in SYM_NAME_RE.finditer(body)
+            if not m.group(1)[0].isdigit()
+            and body[m.start() - 1:m.start()] not in ("'", "?")}
 
 
 def doc_mentions(sections: list[TheorySection]) -> dict[str, set[str]]:
-    r"""``{name: the theories naming it in a fact antiquotation}``
-    [leaf-evidence].
+    r"""``{name: the theories naming it in an antiquotation}``
+    [leaf-evidence] [doc-antiq].
 
     The citation graph strips these on purpose (`antiq_re` below): a name
     shown in a document is not a proof that uses it.  It is evidence that the
     author means it to stay, though, which is what `unused` reports — a
-    result printed in the paper the theory renders is not dead code.  The raw
-    source is read, so an ML `@{thm foo}` counts too, and that use is real.
+    result printed in the paper the theory renders is not dead code — and
+    more than that for a constant: `@{const foo}` is checked when its theory
+    is processed, so deleting `foo` breaks the build (#44).  The raw source
+    is read, so an ML `@{term "foo"}` counts too, and that use is real.
 
-    A mention is reduced to the name it points at: `foo(2)` and `Thy.foo`
-    are `foo`, the graph's node.  Which declaration it can mean is the
+    A mention is reduced to the name it points at
+    (:func:`antiquotation_names`).  Which declaration it can mean is the
     caller's question (:meth:`_Visibility.sees`)."""
     out: dict[str, set[str]] = {}
     for sec in sections:
-        text = "\n".join(sec.source())
-        if "thm" not in text:
-            continue
-        bodies = [m.group(1) for m in _AT_ANTIQ_RE.finditer(text)]
-        bodies += [m.group(1) for m in _CART_ANTIQ_RE.finditer(text)]
-        for body in bodies:
-            for n in _ANTIQ_NAME_RE.findall(_ANTIQ_ATTRS_RE.sub(" ", body)):
-                bare = n.split("(", 1)[0].rsplit(".", 1)[-1]
-                out.setdefault(bare, set()).add(sec.theory)
+        for kind, _s, _e, body in doc_antiquotations("\n".join(sec.source())):
+            for n in antiquotation_names(kind, body):
+                out.setdefault(n, set()).add(sec.theory)
     return out
 
 
