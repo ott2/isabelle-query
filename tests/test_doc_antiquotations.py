@@ -78,14 +78,15 @@ class TheScanner(unittest.TestCase):
             "@{typeof x} @{thms a b} @{lemma \"P\" by simp}")], ["thms"])
 
     def test_term_names(self):
-        names = graph.antiquotation_names
+        def names(*a):
+            return set(graph.antiquotation_names(*a))
         self.assertEqual(names("term", ' [show_types] "f [g, h] x"'),
                          {"f", "g", "h", "x"})
         self.assertEqual(names("typ", " \"'a list\""), {"list"})
         self.assertEqual(names("term", ' "?x + f\\<^sub>1"'),
                          {"f\\<^sub>1"})
-        self.assertEqual(names("thm", " foo(2)[OF bar] Thy.baz"),
-                         {"foo", "baz"})
+        self.assertEqual(names("thm", " foo(2)[OF bar] Thy.baz",
+                               frozenset({"Thy"})), {"foo", "baz"})
 
 
 class UnusedCountsThem(unittest.TestCase):

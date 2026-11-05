@@ -40,6 +40,7 @@ from isabelle_query.model import (
     TheorySection,
     _CITABLE_TAGS,
     _DROP_NAMES_UPTO,
+    _GOAL_TAGS,
     locus_labels,
 )
 from isabelle_layout import parse_thy_imports
@@ -548,8 +549,20 @@ class _Visibility:
     """
 
     def __init__(self, sections: list[TheorySection], mode: str = "closure",
-                 *, bound_names: bool = False, memo_closures: bool = False):
+                 *, bound_names: bool = False, memo_closures: bool = False,
+                 names_of: "Callable[[Entry], list[str]] | None" = None,
+                 share: "_Visibility | None" = None,
+                 maps: tuple | None = None):
+        """``names_of`` picks the names an entry declares, for a
+        visibility over one name space (:class:`SpaceVisibility`); by
+        default its own name, and its bindings under ``bound_names``.
+        ``share`` reuses another instance's theory index, imports memo and
+        closures, so a second view over the same sections reads no header
+        and walks no closure twice.  ``maps`` hands in ``(declared_in,
+        public_in, first)`` already built, for a caller that fills several
+        views in one pass over the entries (:class:`SpaceVisibility`)."""
         self.mode = mode
+        self._share = share
         # One closure at a time (the class docstring), unless the caller says
         # its walk ALTERNATES theories: the hierarchy walk behind
         # `instances -r` asks about the theory each edge is written in, in
@@ -558,8 +571,11 @@ class _Visibility:
         # longer than the request that asked for it.
         self._closures: dict[str, dict[str, int] | None] | None = (
             {} if memo_closures else None)
-        self.by_theory = _sections_by_theory(sections)
-        self._leaf = _leaf_index(self.by_theory)
+        if share is not None:
+            self.by_theory, self._leaf = share.by_theory, share._leaf
+        else:
+            self.by_theory = _sections_by_theory(sections)
+            self._leaf = _leaf_index(self.by_theory)
         # theory -> EVERY section of that name, not the last-wins one.  A
         # name is unique in a session and not in a corpus (461 AFP names are
         # shared by 1,219 theories), and this filter may only DROP, so the
@@ -567,11 +583,15 @@ class _Visibility:
         # while one section's imports standing for another's deletes real
         # citations [visibility-by-name].
         self._sections_of: dict[str, list[TheorySection]] = {}
-        for sec in sections:
-            self._sections_of.setdefault(sec.theory, []).append(sec)
+        if share is not None:
+            self._sections_of = share._sections_of
+        else:
+            for sec in sections:
+                self._sections_of.setdefault(sec.theory, []).append(sec)
         self._closure: tuple[str, dict[str, int] | None] | None = None
         # theory -> its in-project imports, read once; None = could not read.
-        self._imports: dict[str, list[str] | None] = {}
+        self._imports: dict[str, list[str] | None] = (
+            share._imports if share is not None else {})
         # name -> the theories declaring it.  A name declared NOWHERE is never
         # filtered: `sees` is asked about tokens the caller already believes
         # are citable, and inventing an answer for one the project does not
@@ -603,10 +623,14 @@ class _Visibility:
         # over a corpus [name-is-not-identity]: the question is whether THIS
         # file has declared the name by the line being read.
         self._first: dict[Path, dict[str, int]] = {}
+        if maps is not None:
+            self.declared_in, self.public_in, self._first = maps
+            sections = ()
         for sec in sections:
             first = self._first.setdefault(sec.path, {})
             for e in sec.entries:
-                names = [e.name] + (e.bound_names if bound_names else [])
+                names = (names_of(e) if names_of is not None else
+                         [e.name] + (e.bound_names if bound_names else []))
                 for n in names:
                     self.declared_in.setdefault(n, set()).add(sec.theory)
                     if e.visibility != "private":
@@ -647,6 +671,8 @@ class _Visibility:
         """``{theory: 0}`` and each transitive in-project import at its
         shortest import depth, or None if any header on the walk could not be
         read — see the class docstring."""
+        if self._share is not None:
+            return self._share.depths(theory)
         if self._closures is not None and theory in self._closures:
             return self._closures[theory]
         if self._closure is not None and self._closure[0] == theory:
@@ -845,21 +871,80 @@ class _SiteFilter:
 
 # The antiquotations that name a declaration, and so fail the build when it
 # goes [doc-antiq].  FACT kinds name facts: `@{thm foo}`, `@{thm [display]
-# foo bar}`, `@{thms foo}`, the style forms, `\<^thm>‹foo›`.  TERM kinds
-# name constants and types, alone (`@{const foo}`, `@{typ "'a foo"}`,
-# `@{type foo}`) or inside a term (`@{term "foo x"}`).  Not `@{lemma "P" by
-# simp}`, which states a proposition rather than naming one.
+# foo bar}`, `@{thms foo}`, the style forms, `\<^thm>‹foo›`.  The others
+# name constants, types, classes or locales, alone (`@{const foo}`, `@{type
+# foo}`) or inside a term or type (`@{term "foo x"}`, `@{typ "'a foo"}`).
+# Not `@{lemma "P" by simp}`, which states a proposition rather than naming
+# one.
 FACT_ANTIQ_KINDS = frozenset({"thm", "thms", "thm_style", "named_thms"})
-TERM_ANTIQ_KINDS = frozenset({"const", "term", "typ", "type"})
+
+# Isabelle's name spaces [antiq-namespace]: `definition foo` and `lemma foo`
+# can coexist, and `@{const foo}` can only mean the first.  Which entries
+# declare into each, by tag and by binding kind (`Entry.bindings`).  An
+# `axiomatization` declares constants and the facts about them, so `AXIOM`
+# is in both.  A locale or class with assumptions defines a predicate
+# constant of its own name (`@{term "M_ZF_library M"}`, `@{const
+# class.wqo}`), so both are constants as well as their own spaces.  A
+# locale's labelled elements (`assumes`, `defines`, `notes`) are facts; its
+# `fixes` are parameters and bind nothing here.
+FACT, CONST, TYPE, CLASS, LOCALE = "fact", "const", "type", "class", "locale"
+_SPACE_TAGS = {
+    FACT: _GOAL_TAGS | {"LEMMAS", "AXIOM"},
+    CONST: frozenset({"DEF", "FUN", "ABBREV", "IND", "INDSET", "AXIOM",
+                      "LOCALE", "CLASS"}),
+    TYPE: frozenset({"DATATYPE", "RECORD", "TYPE"}),
+    CLASS: frozenset({"CLASS"}),
+    LOCALE: frozenset({"LOCALE"}),
+}
+_SPACE_BINDINGS = {
+    FACT: frozenset({"conjunct", "rule", "note", "assumption", "definition"}),
+    CONST: frozenset({"sibling", "constructor", "discriminator", "selector",
+                      "field"}),
+}
+# The spaces each non-fact kind reads.  A term names constants and, in its
+# type annotations, types; a type names types and, in its sort constraints,
+# classes.
+_KIND_SPACES = {
+    "const": frozenset({CONST}),
+    "term": frozenset({CONST, TYPE}),
+    "typ": frozenset({TYPE, CLASS}),
+    "type": frozenset({TYPE}),
+}
+_ANTIQ_KINDS = sorted(FACT_ANTIQ_KINDS | set(_KIND_SPACES),
+                      key=lambda k: -len(k))   # longest first: `thms` > `thm`
 _ANTIQ_START_RE = re.compile(
-    r"@\{\s*(thm_style|named_thms|thms|thm|const|term|typ|type)(?![\w'])"
-    r"|\\<\^(thms|thm|const|term|typ|type)>\s*(?=\\<open>|‹)")
+    r"@\{\s*(" + "|".join(_ANTIQ_KINDS) + r")(?![\w'])"
+    r"|\\<\^(" + "|".join(_ANTIQ_KINDS) + r")>\s*(?=\\<open>|‹)")
 _OPEN, _CLOSE = ("\\<open>", "‹"), ("\\<close>", "›")
 _ANTIQ_ATTRS_RE = re.compile(r"\[[^\]]*\]")
 _ANTIQ_NAME_RE = re.compile(r"[A-Za-z][\w'.]*")
 # A term's options come first (`@{term [show_types] "x"}`); a later `[` is
 # the term's own list syntax, whose names count.
 _ANTIQ_OPTIONS_RE = re.compile(r"\s*\[[^\]]*\]")
+# A fact a constant's or a type's declaration mints, spelled with a suffix:
+# `foo_def` is `definition foo`'s.  The dotted family (`foo.simps`,
+# `foo.induct`) is read from the prefix instead.
+_DERIVED_SUFFIXES = ("_defs", "_def")
+_CONST_OR_TYPE = frozenset({CONST, TYPE})
+
+
+# The same two tables inverted, for a pass that fills every space at once.
+_TAG_SPACES = {t: tuple(sp for sp, ts in _SPACE_TAGS.items() if t in ts)
+               for ts in _SPACE_TAGS.values() for t in ts}
+_BINDING_SPACES = {k: tuple(sp for sp, ks in _SPACE_BINDINGS.items()
+                            if k in ks)
+                   for ks in _SPACE_BINDINGS.values() for k in ks}
+
+
+def space_names(e: Entry, space: str, bindings: bool = True) -> list[str]:
+    """The names ``e`` declares in name space ``space`` [antiq-namespace]:
+    its own name when its tag declares into the space, and, with
+    ``bindings``, its bindings of the kinds that do."""
+    names = [e.name] if e.tag in _SPACE_TAGS[space] else []
+    kinds = _SPACE_BINDINGS.get(space) if bindings else None
+    if kinds:
+        names += [n for n, k in e.bindings if k in kinds]
+    return names
 
 
 def _cartouche_end(text: str, i: int) -> int:
@@ -922,30 +1007,142 @@ def doc_antiquotations(text: str):
             yield m.group(2), m.start(), end, text[m.end():end]
 
 
-def antiquotation_names(kind: str, body: str) -> set[str]:
-    r"""The declarations an antiquotation's body names, reduced to graph
-    nodes [doc-antiq].
+def antiquotation_names(kind: str, body: str,
+                        theories: frozenset[str] = frozenset()
+                        ) -> dict[str, frozenset[str]]:
+    r"""``{name: the name spaces it may be in}`` for an antiquotation's
+    body, each name reduced to a graph node [doc-antiq] [antiq-namespace].
 
-    A fact name drops its selection and qualifier: `foo(2)` and `Thy.foo`
-    are `foo`, and its attributes (`[OF bar]`) are not read.  A term is read
-    with query's name atom, `parsing.SYM_NAME_RE`, so `foo\<^sub>1` is not
-    `foo`; every name it holds counts, which over-reads a bound variable
-    that shares a constant's name.  That errs towards keeping an entry,
-    the safe side for a deletion check.  A type variable (`'a`) and a
-    schematic one (`?x`) name nothing."""
+    A fact antiquotation names a fact by its last component: `Thy.foo`,
+    `x.foo` and `foo(2)` are the fact `foo`, and attributes (`[OF bar]`)
+    are not read.  It may also name a fact that a constant's or a type's
+    declaration minted, and then it depends on that declaration: `foo_def`
+    on `definition foo`, and `foo.simps`, `foo.induct` on the `fun` or
+    `datatype foo` their prefix names.  So the prefix is read too, as the
+    citation graph's tokenizer reads it, unless it is one of ``theories``
+    (the `List` of `List.foo` names a theory).
+
+    Other kinds name what :data:`_KIND_SPACES` says, read with query's name
+    atom, `parsing.SYM_NAME_RE`, so `foo\<^sub>1` is not `foo`.  Every name
+    in a term counts, which over-reads a bound variable that shares a
+    constant's name: that errs towards keeping.  A type variable (`'a`) and
+    a schematic one (`?x`) name nothing."""
+    out: dict[str, set[str]] = {}
     if kind in FACT_ANTIQ_KINDS:
-        return {n.split("(", 1)[0].rsplit(".", 1)[-1]
-                for n in _ANTIQ_NAME_RE.findall(_ANTIQ_ATTRS_RE.sub(" ", body))}
+        for tok in _ANTIQ_NAME_RE.findall(_ANTIQ_ATTRS_RE.sub(" ", body)):
+            parts = [p for p in tok.split("(", 1)[0].split(".") if p]
+            if not parts:
+                continue
+            last = parts[-1]
+            out.setdefault(last, set()).add(FACT)
+            for suffix in _DERIVED_SUFFIXES:
+                if last.endswith(suffix) and len(last) > len(suffix):
+                    out.setdefault(last[:-len(suffix)], set()).update(
+                        _CONST_OR_TYPE)
+                    break
+            for p in parts[:-1]:
+                if p not in theories:
+                    out.setdefault(p, set()).update(_CONST_OR_TYPE)
+        return {n: frozenset(s) for n, s in out.items()}
+    spaces = _KIND_SPACES[kind]
     body = _ANTIQ_OPTIONS_RE.sub(" ", body, count=1) \
         if _ANTIQ_OPTIONS_RE.match(body) else body
-    return {m.group(1) for m in SYM_NAME_RE.finditer(body)
+    return {m.group(1): spaces for m in SYM_NAME_RE.finditer(body)
             if not m.group(1)[0].isdigit()
             and body[m.start() - 1:m.start()] not in ("'", "?")}
 
 
+class SpaceVisibility:
+    """:class:`_Visibility` per name space [antiq-namespace]: may an
+    antiquotation at a line name the project's declaration of a name in one
+    of the spaces its kind reads?
+
+    One `_Visibility` per space, all filled in one pass over the entries and
+    sharing one theory index, imports memo and closure: the headers are
+    read and each closure walked once, not once per space.  A caller that
+    asks in section order gets each theory's closure from the one-slot
+    cache.
+
+    ``bindings`` counts what an entry binds (a constructor, a locale's
+    `assumes` label) as declared in its space, which a subject typed at
+    `callers` may be.  Off for `unused`'s evidence, whose rows are entries
+    under their own names: there `@{const False}` naming a constructor is
+    no evidence for a `lemma False`, though the graph's node is the name."""
+
+    def __init__(self, sections: list[TheorySection], reach: str = "closure",
+                 bindings: bool = True):
+        self.sections, self.reach, self.bindings = sections, reach, bindings
+        self._base = _Visibility(sections, reach)
+        self._own: dict[tuple[str, Path], dict[str, int]] = {}
+        # Every space's maps in ONE pass over the entries, not one per space:
+        # over the AFP a pass is ~0.6s, and five of them were a third of the
+        # whole evidence step.
+        maps = {sp: ({}, {}, {}) for sp in _SPACE_TAGS}
+        for sec in sections:
+            thy, path = sec.theory, sec.path
+            for e in sec.entries:
+                hits = [(sp, e.name) for sp in _TAG_SPACES.get(e.tag, ())]
+                if bindings and e.bindings:
+                    hits += [(sp, n) for n, k in e.bindings
+                             for sp in _BINDING_SPACES.get(k, ())]
+                for sp, n in hits:
+                    decl, pub, firsts = maps[sp]
+                    decl.setdefault(n, set()).add(thy)
+                    if e.visibility != "private":
+                        pub.setdefault(n, set()).add(thy)
+                    first = firsts.setdefault(path, {})
+                    if 0 < e.thy_line < first.get(n, 1 << 30):
+                        first[n] = e.thy_line
+        self._by_space = {sp: _Visibility(sections, reach, share=self._base,
+                                          maps=m)
+                          for sp, m in maps.items()}
+
+    def space(self, space: str) -> _Visibility:
+        return self._by_space[space]
+
+    def declares(self, name: str) -> bool:
+        """Does the project declare ``name`` in ANY space?"""
+        return name in self._base.declared_in
+
+    def names(self, name: str, spaces: frozenset[str],
+              sec: TheorySection, line: int) -> bool:
+        """Can an antiquotation at ``line`` of ``sec``, reading ``spaces``,
+        name the project's ``name``?  Only if one of those spaces declares
+        it, visibly from there (:meth:`_Visibility.sees_at`).  Always,
+        under ``reach="name"``: that is the switch back to name-only
+        matching, so it drops the space as well as the closure."""
+        if self.reach != "closure":
+            return True
+        for sp in spaces:
+            vis = self.space(sp)
+            if name not in vis.declared_in:
+                continue
+            key = (sp, sec.path)
+            own = self._own.get(key)
+            if own is None:
+                own = self._own[key] = vis.lines_in(sec)
+            if vis.sees_at(sec.theory, name, line, own):
+                return True
+        return False
+
+
+_SPACE_VIS: list = [None, None, None]     # (sections, (reach, bindings), it)
+
+
+def space_visibility(sections: list[TheorySection], reach: str = "closure",
+                     bindings: bool = True) -> SpaceVisibility:
+    """One :class:`SpaceVisibility` per request, not per subject: a batch
+    (`callers --antiquotations A B C`) asks about each name against the same
+    sections.  Held by identity, which `id` alone cannot promise."""
+    if _SPACE_VIS[0] is not sections or _SPACE_VIS[1] != (reach, bindings):
+        _SPACE_VIS[:] = [sections, (reach, bindings),
+                         SpaceVisibility(sections, reach, bindings)]
+    return _SPACE_VIS[2]
+
+
 def doc_mentions(sections: list[TheorySection]
-                 ) -> dict[str, list[tuple[TheorySection, int]]]:
-    r"""``{name: the (section, line) of each antiquotation naming it}``
+                 ) -> dict[str, list[tuple[TheorySection, int, frozenset[str]]]]:
+    r"""``{name: (section, line, spaces) of each antiquotation naming it}``
     [leaf-evidence] [doc-antiq].
 
     The citation graph strips these on purpose (`antiq_re` below): a name
@@ -956,18 +1153,19 @@ def doc_mentions(sections: list[TheorySection]
     is processed, so deleting `foo` breaks the build (#44).  The raw source
     is read, so an ML `@{term "foo"}` counts too, and that use is real.
 
-    A mention is reduced to the name it points at
-    (:func:`antiquotation_names`).  Which declaration it can mean is the
-    caller's question (:meth:`_Visibility.sees_at`), and the line is part of
-    it: a mention above its own file's declaration names another
-    [decl-order]."""
-    out: dict[str, list[tuple[TheorySection, int]]] = {}
+    A mention is reduced to the names it points at, each with the name
+    spaces it may be in (:func:`antiquotation_names`).  Which declaration it
+    can mean is the caller's question (:meth:`SpaceVisibility.names`), and
+    the line is part of it: a mention above its own file's declaration
+    names another [decl-order]."""
+    theories = frozenset(sec.theory for sec in sections)
+    out: dict[str, list[tuple[TheorySection, int, frozenset[str]]]] = {}
     for sec in sections:
         text = "\n".join(sec.source())
         for kind, start, _e, body in doc_antiquotations(text):
             line = text.count("\n", 0, start) + 1
-            for n in antiquotation_names(kind, body):
-                out.setdefault(n, []).append((sec, line))
+            for n, spaces in antiquotation_names(kind, body, theories).items():
+                out.setdefault(n, []).append((sec, line, spaces))
     return out
 
 

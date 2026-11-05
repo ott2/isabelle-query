@@ -1018,6 +1018,12 @@ def _find_antiq_callers(sections: list[TheorySection], name: str,
     if external:
         def_paths = {p for p, m in _build_def_sites(sections, {name}).items()
                      if m}
+    # The name space decides as well as the closure [antiq-namespace]:
+    # `@{const foo}` is no reference to `lemma foo`.  A name the project
+    # declares in no space is a token search, as plain `callers` is.
+    spaces_vis = _graph.space_visibility(sections, reach)
+    declared = spaces_vis.declares(name)
+    theories = frozenset(sec.theory for sec in sections)
     results: list[tuple[TheorySection, int, str]] = []
     for sec in sections:
         if external and sec.path in def_paths:
@@ -1028,10 +1034,14 @@ def _find_antiq_callers(sections: list[TheorySection], name: str,
             continue
         seen: set[int] = set()
         for kind, start, _end, body in _graph.doc_antiquotations(text):
-            if name not in _graph.antiquotation_names(kind, body):
+            spaces = _graph.antiquotation_names(kind, body, theories).get(name)
+            if spaces is None:
                 continue
             line_no = text.count("\n", 0, start) + 1
-            if line_no not in seen and admits.at(sec, line_no):
+            if line_no in seen:
+                continue
+            if (spaces_vis.names(name, spaces, sec, line_no) if declared
+                    else admits.at(sec, line_no)):
                 seen.add(line_no)
                 results.append((sec, line_no, raw[line_no - 1].rstrip()))
     return results
@@ -2303,11 +2313,23 @@ def _evidence(sections: list[TheorySection], reach: str = "closure"
     declared = {e.name for sec in sections for e in sec.entries}
     mentions = {n: at for n, at in mentions.items() if n in declared}
     if mentions:
-        vis = _graph._Visibility(sections, reach)
-        own = {}
-        for n, at in mentions.items():
-            if any(vis.sees_at(sec.theory, n, line, own.setdefault(
-                    sec.path, vis.lines_in(sec))) for sec, line in at):
+        # Per name space as well [antiq-namespace]: `@{const foo}` is no
+        # evidence for `lemma foo`.
+        spaces_vis = _graph.space_visibility(sections, reach, bindings=False)
+        # In section order, so each theory's import closure is walked once
+        # and then served from the one-slot cache; name by name, the
+        # mentions jump between theories and miss it.
+        order = {id(sec): i for i, sec in enumerate(sections)}
+        checks = sorted(((order[id(sec)], line, n, sec, spaces)
+                         for n, at in mentions.items()
+                         for sec, line, spaces in at),
+                        key=lambda c: (c[0], c[1]))
+        found: set[str] = set()
+        for _i, line, n, sec, spaces in checks:
+            if n not in found and spaces_vis.names(n, spaces, sec, line):
+                found.add(n)
+        for n in mentions:            # in `mentions`' order, as before
+            if n in found:
                 out.setdefault(n, []).append("doc")
     return out
 
