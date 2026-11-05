@@ -306,6 +306,12 @@ class TheorySection:
         # when its spans cover every non-blank character, whereas a line that
         # merely ENDS in a comment appears only here.  Consumed by
         # `live_source`.
+    unread_spans: dict[int, list[tuple[int, int]]] = field(default_factory=dict)
+        # The part of `nonisar_spans` Isabelle never reads [antiq-comment]:
+        # `(* ... *)` comments and the bodies of `\<^cancel>`, `\<^latex>` and
+        # `\<^marker>`.  An antiquotation there is not checked; one in an ML
+        # body or a `\<comment>` note is.  Only the tokenizer can tell them
+        # apart (`parsing._scan_nonisar_spans`).
     inner_spans: dict[int, list[tuple[int, int]]] = field(default_factory=dict)
         # Everything that is NOT outer syntax, at character granularity:
         # `nonisar_spans` PLUS the `"..."` terms and live cartouches that scan

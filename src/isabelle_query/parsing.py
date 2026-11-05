@@ -1797,6 +1797,7 @@ def _opens_ml_body(lines: list[str], i: int, pos: int) -> bool:
 
 def _scan_nonisar_spans(
         lines: list[str], want_inner: bool = True,
+        unread: "dict[int, list[tuple[int, int]]] | None" = None,
 ) -> tuple[list[list[tuple[int, int]]], dict[int, set[int]],
            list[list[tuple[int, int]]]]:
     r"""Per-line ``[(start_col, end_col)]`` half-open character spans that are
@@ -1814,6 +1815,14 @@ def _scan_nonisar_spans(
     citation that the call graph must keep.  Likewise a bare cartouche is left
     live — only the cartouche of an ML command is a body, and the command
     keyword decides that, exactly as `TEXT_OPEN_RE` decides it for `text`.
+
+    ``unread``, when given, also gets ``{line_no: [(lo, hi)]}`` for the spans
+    Isabelle never reads [antiq-comment]: a ``(* ... *)`` comment, and the
+    body of ``\<^cancel>``, ``\<^latex>`` and ``\<^marker>``.  An
+    antiquotation there is not checked, where one in an ML body or a
+    ``\<comment>`` note is.  Only this machine can tell them apart: inside an
+    ML body a line may begin with an ML comment's ``(*``, which the spans
+    alone cannot distinguish from a comment region starting.
     """
     spans: list[list[tuple[int, int]]] = [[] for _ in lines]
     # Columns at which a GENUINE `\<comment>` note opens, per 1-indexed line.
@@ -1841,6 +1850,7 @@ def _scan_nonisar_spans(
     start = -1   # column where the current noise region began on this line
     resume = "text"   # state to return to when the current marker cartouche ends
     resume_depth = 0  # ...and the nesting depth that state was at
+    dead = False      # is the current noise region one Isabelle never reads?
     for i, line in enumerate(lines):
         n = len(line)
         if state in _NOISE_STATES:
@@ -1853,20 +1863,21 @@ def _scan_nonisar_spans(
             was_text = state == "text"
             if state == "text":
                 if tok == "(*":
-                    state, depth, start = "comment", 1, pos
+                    state, depth, start, dead = "comment", 1, pos, True
                 elif tok == "{*":
-                    state, start = "verbatim", pos
+                    state, start, dead = "verbatim", pos, False
                 elif tok == '"':
                     state = "string"
                 elif tok.startswith(_REDACTING_MARKERS):
                     # `\<^cancel>` (deleted text) or `\<comment>` (a marginal
                     # note) plus the cartouche it owns — matched as one token.
                     state, depth, start = "cartouche", 1, pos
+                    dead = not tok.startswith(_MARGINAL)
                     if tok.startswith(_MARGINAL):
                         notes.setdefault(i + 1, set()).add(pos)
                 elif tok in _CART_OPEN:
                     if _opens_ml_body(lines, i, pos):  # ML body: redact it
-                        state, depth, start = "cartouche", 1, pos
+                        state, depth, start, dead = "cartouche", 1, pos, False
                     else:  # a term / prose cartouche: one token, but kept live
                         state, depth = "term", 1
                 # a stray `*)` / `*}` / `\<close>` in text is not a delimiter
@@ -1883,6 +1894,7 @@ def _scan_nonisar_spans(
                     # open a comment that swallows the proof.
                     state, resume, resume_depth = "cartouche", "string", depth
                     depth, start = 1, pos
+                    dead = not tok.startswith(_MARGINAL)
                     if tok.startswith(_MARGINAL):
                         notes.setdefault(i + 1, set()).add(pos)
             elif state == "comment":
@@ -1892,6 +1904,9 @@ def _scan_nonisar_spans(
                     depth -= 1
                     if depth <= 0:
                         spans[i].append((start, m.end()))
+                        if unread is not None:
+                            unread.setdefault(i + 1, []).append(
+                                (start, m.end()))
                         state, start = "text", -1
             elif state == "verbatim":
                 if tok == "*}":         # legacy verbatim does not nest
@@ -1917,6 +1932,7 @@ def _scan_nonisar_spans(
                     # would resume at the note's depth.
                     state, resume, resume_depth = "cartouche", "term", depth
                     depth, start = 1, pos
+                    dead = not tok.startswith(_MARGINAL)
                     if tok.startswith(_MARGINAL):
                         notes.setdefault(i + 1, set()).add(pos)
                 elif tok.endswith(_CART_OPEN):
@@ -1932,6 +1948,9 @@ def _scan_nonisar_spans(
                     depth -= 1
                     if depth <= 0:
                         spans[i].append((start, m.end()))
+                        if dead and unread is not None:
+                            unread.setdefault(i + 1, []).append(
+                                (start, m.end()))
                         state, start = resume, -1
                         depth, resume, resume_depth = resume_depth, "text", 0
             # The outer-syntax boundary, maintained in ONE place rather than a
@@ -1947,6 +1966,8 @@ def _scan_nonisar_spans(
                 inner_start = -1
         if state in _NOISE_STATES and 0 <= start < n:
             spans[i].append((start, n))
+            if dead and unread is not None:
+                unread.setdefault(i + 1, []).append((start, n))
         if want_inner and state != "text" and 0 <= inner_start < n:
             inner[i].append((inner_start, n))
         # Every state persists to the next line.  A ``"..."`` term routinely
@@ -1960,6 +1981,7 @@ def _scan_nonisar_spans(
 
 
 def scan_regions(lines: list[str], want_inner: bool = False,
+                 unread: "dict[int, list[tuple[int, int]]] | None" = None,
                  ) -> tuple[dict[int, list[tuple[int, int]]],
                             dict[int, set[int]],
                             dict[int, list[tuple[int, int]]],
@@ -2002,7 +2024,8 @@ def scan_regions(lines: list[str], want_inner: bool = False,
     if not want_inner and not any(_ANY_REGION_RE.search(ln) for ln in lines) \
             and not any(_leads_with_ml(ln) for ln in lines):
         return {}, {}, {}, bytearray(len(lines))
-    spans, notes, inner, open_at = _scan_nonisar_spans(lines, want_inner)
+    spans, notes, inner, open_at = _scan_nonisar_spans(lines, want_inner,
+                                                       unread)
     return ({i: sp for i, sp in enumerate(spans, 1) if sp},
             notes,
             {i: sp for i, sp in enumerate(inner, 1) if sp},
@@ -3248,8 +3271,9 @@ def _parse_one(thy: str, thy_path: Path,
     # (for `live_source`), the whole-noise lines derived from them (for the
     # line-granular masks), and the declaration scan, which must not read a
     # commented-out `definition` or an ML `fun` as an entry.
+    unread_spans: dict[int, list[tuple[int, int]]] = {}
     nonisar_spans, note_starts, inner_spans, open_at = scan_regions(
-        lines, want_inner=True)
+        lines, want_inner=True, unread=unread_spans)
     nonisar_ranges = extract_nonisar_ranges(lines, nonisar_spans)
     outer = blank_all(lines, inner_spans)
     entries = extract_entries(lines, nonisar_ranges=nonisar_ranges,
@@ -3322,6 +3346,7 @@ def _parse_one(thy: str, thy_path: Path,
                         comment_ranges=comment_ranges,
                         nonisar_ranges=nonisar_ranges,
                         nonisar_spans=nonisar_spans,
+                        unread_spans=unread_spans,
                         inner_spans=inner_spans, proof_owners=owners)
     if from_memory:
         # No disk path to lazily re-read (stdin); pin the source we already have.

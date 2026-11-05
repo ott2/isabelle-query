@@ -1000,7 +1000,7 @@ def _find_callers(sections: list[TheorySection], name: str,
 def _find_antiq_callers(sections: list[TheorySection], name: str,
                         external: bool = False, reach: str = "closure",
                         ) -> list[tuple[TheorySection, int, str]]:
-    """Where an antiquotation names *name*: `callers --antiquotations`
+    r"""Where an antiquotation names *name*: `callers --antiquotations`
     [doc-antiq].
 
     The rows :func:`_find_callers` leaves out on purpose, since a name shown
@@ -1012,8 +1012,9 @@ def _find_antiq_callers(sections: list[TheorySection], name: str,
     line being where the antiquotation starts, one row per line.  Scoped as
     those are: only theories that can see a declaration of *name*, and
     under ``external`` none of the files that declare it.  The raw source is
-    read, as `unused`'s `doc` evidence reads it, so text, comments and ML
-    all count, and a body may span lines."""
+    read, as `unused`'s `doc` evidence reads it, so text, `\<comment>` notes
+    and ML all count, and a body may span lines.  A `(* ... *)` comment or
+    cancelled text does not: Isabelle never reads it [antiq-comment]."""
     admits = _graph.site_filter(sections, name, reach)
     if external:
         def_paths = {p for p, m in _build_def_sites(sections, {name}).items()
@@ -1039,6 +1040,10 @@ def _find_antiq_callers(sections: list[TheorySection], name: str,
                 continue
             line_no = text.count("\n", 0, start) + 1
             if line_no in seen:
+                continue
+            # Never read by Isabelle, so no dependency [antiq-comment].
+            if line_no in sec.unread_spans and _graph.unchecked_at(
+                    sec, line_no, start - text.rfind("\n", 0, start) - 1):
                 continue
             if (spaces_vis.names(name, spaces, sec, line_no) if declared
                     else admits.at(sec, line_no)):

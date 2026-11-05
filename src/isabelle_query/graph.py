@@ -992,6 +992,14 @@ def _brace_end(text: str, i: int) -> int:
     return n
 
 
+def unchecked_at(sec: TheorySection, line: int, col: int) -> bool:
+    """Is ``line``:``col`` inside a comment, or cancelled or raw text, which
+    Isabelle never reads [antiq-comment]?  The tokenizer records those
+    regions (`TheorySection.unread_spans`); an ML body and a `\\<comment>`
+    note are read, and are not among them."""
+    return any(lo <= col < hi for lo, hi in sec.unread_spans.get(line, ()))
+
+
 def doc_antiquotations(text: str):
     """Yield ``(kind, start, end, body)`` for each name-bearing antiquotation
     in ``text`` [doc-antiq], in either spelling.  Bodies may span lines: the
@@ -1157,13 +1165,17 @@ def doc_mentions(sections: list[TheorySection]
     spaces it may be in (:func:`antiquotation_names`).  Which declaration it
     can mean is the caller's question (:meth:`SpaceVisibility.names`), and
     the line is part of it: a mention above its own file's declaration
-    names another [decl-order]."""
+    names another [decl-order].  One in a comment or cancelled text is
+    never checked, and is skipped (:func:`unchecked_at`)."""
     theories = frozenset(sec.theory for sec in sections)
     out: dict[str, list[tuple[TheorySection, int, frozenset[str]]]] = {}
     for sec in sections:
         text = "\n".join(sec.source())
         for kind, start, _e, body in doc_antiquotations(text):
             line = text.count("\n", 0, start) + 1
+            if line in sec.unread_spans and unchecked_at(
+                    sec, line, start - text.rfind("\n", 0, start) - 1):
+                continue
             for n, spaces in antiquotation_names(kind, body, theories).items():
                 out.setdefault(n, []).append((sec, line, spaces))
     return out
