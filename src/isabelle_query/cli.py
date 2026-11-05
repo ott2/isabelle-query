@@ -1557,9 +1557,13 @@ def _build_parser() -> argparse.ArgumentParser:
                         "transitive closure via -r ignores this flag.")
     p.add_argument("--antiquotations", action="store_true",
                    help="also report NAME where an antiquotation names it: "
-                        "`@{thm}`, `@{const}`, `@{term}`, `@{typ}`, `@{type}` "
-                        "or the `\\<^const>` spelling, in text, comments and "
-                        "ML alike.  Not a proof use, but checked when the "
+                        "`@{thm}`, `@{const}`, `@{term}`, `@{typ}` and the "
+                        "other kinds that name a declaration, in either "
+                        "spelling, in text, `\\<comment>` notes and ML alike, "
+                        "and in NAME's own name space (`@{const foo}` is no "
+                        "`lemma foo`).  Not in a `(* *)` comment, which "
+                        "Isabelle never reads.  Not a proof use, but checked "
+                        "when the "
                         "theory is processed, so deleting or moving NAME "
                         "breaks it.  Rows are marked `[antiq]`, tag `ANTIQ` "
                         "under -f tsv.  Direct references only: not with -r")

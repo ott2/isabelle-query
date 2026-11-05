@@ -901,15 +901,35 @@ _SPACE_BINDINGS = {
     CONST: frozenset({"sibling", "constructor", "discriminator", "selector",
                       "field"}),
 }
-# The spaces each non-fact kind reads.  A term names constants and, in its
-# type annotations, types; a type names types and, in its sort constraints,
-# classes.
+# The spaces each non-fact kind reads [antiq-kinds].  A term or proposition
+# names constants and, in its type annotations, types; a type names types
+# and, in its sort constraints, classes.  The `_name` forms and `const_syntax`
+# name one declaration, mostly from ML, where an antiquotation is evaluated
+# as surely as in a document.  `syntax_const` names a syntax-only constant,
+# which is never an entry, and `@{lemma "P" by m}` runs a proof whose
+# citations belong to the citation graph, so neither is read.
 _KIND_SPACES = {
     "const": frozenset({CONST}),
+    "const_name": frozenset({CONST}),
+    "const_abbrev": frozenset({CONST}),
+    "const_syntax": frozenset({CONST}),
+    "Const": frozenset({CONST}),
+    "Const_": frozenset({CONST}),
     "term": frozenset({CONST, TYPE}),
+    "prop": frozenset({CONST, TYPE}),
+    "term_type": frozenset({CONST, TYPE}),
+    "value": frozenset({CONST, TYPE}),
     "typ": frozenset({TYPE, CLASS}),
     "type": frozenset({TYPE}),
+    "type_name": frozenset({TYPE}),
+    "Type": frozenset({TYPE}),
+    "Type_": frozenset({TYPE}),
+    "class": frozenset({CLASS}),
+    "locale": frozenset({LOCALE}),
 }
+# ML's `\<^Const>‹plus T›` and `\<^Type>‹list T›` name one declaration, then
+# take ML variables for its type arguments: only the first name is read.
+_FIRST_NAME_KINDS = frozenset({"Const", "Const_", "Type", "Type_"})
 _ANTIQ_KINDS = sorted(FACT_ANTIQ_KINDS | set(_KIND_SPACES),
                       key=lambda k: -len(k))   # longest first: `thms` > `thm`
 _ANTIQ_START_RE = re.compile(
@@ -1060,9 +1080,13 @@ def antiquotation_names(kind: str, body: str,
     # them out), so the atom would read the `open` of `\<open>` as a word.
     if "\\<" in body:
         body = _CARTOUCHE_DELIM_RE.sub(" ", body)
-    return {m.group(1): spaces for m in SYM_NAME_RE.finditer(body)
-            if not m.group(1)[0].isdigit()
-            and body[m.start() - 1:m.start()] not in ("'", "?")}
+    names = (m.group(1) for m in SYM_NAME_RE.finditer(body)
+             if not m.group(1)[0].isdigit()
+             and body[m.start() - 1:m.start()] not in ("'", "?"))
+    if kind in _FIRST_NAME_KINDS:
+        first = next(names, None)
+        return {first: spaces} if first else {}
+    return {n: spaces for n in names}
 
 
 class SpaceVisibility:

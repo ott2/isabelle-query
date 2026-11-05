@@ -49,19 +49,35 @@ heading keyword *inside* a document block is English, not a command. A `text`
 block citing a textbook — "…follows Kleinberg and Tardos, chapter \"Dynamic
 Programming\"" — declares no chapter, and `outline` does not list one.
 
-An **antiquotation** that names a declaration, in prose, a comment or ML, is
-not a citation either: `@{thm foo}`, `@{const foo}`, `@{term "foo x"}`,
-`@{typ}`, `@{type}`, in either spelling (`\<^const>‹foo›`).  Showing a result
-or a constant in the rendered document is not a proof that uses it, so
-`callers foo` does not list it.  It is not nothing, though.  Isabelle checks
-the antiquotation when it processes the theory, so deleting `foo`, or moving it
-out of reach, breaks the build.  `unused` reports such an entry with `doc`
-evidence rather than as plainly dead, and `callers --antiquotations foo` lists
-the sites as rows of their own (`[antiq]`, tag `ANTIQ` in `-f tsv`).  A term is
-read for every name in it, so a bound variable that shares a constant's name
-counts too, which errs towards keeping.  The mention is scoped like a citation
-(see *A citation must be reachable*), so `@{thm foo}` in a theory that cannot
-see this project's `foo` is evidence for nothing here.
+An **antiquotation** that names a declaration, in prose, a `\<comment>` note or
+ML, is not a citation either: `@{thm foo}`, `@{const foo}`, `@{term "foo x"}`,
+and the other kinds that name something (`prop`, `typ`, `type`, `class`,
+`locale`, the `_name` forms, ML's `\<^Const>` / `\<^Type>`), in either
+spelling (`\<^const>‹foo›`).  Showing a result or a constant in the rendered
+document is not a proof that uses it, so `callers foo` does not list it.  It
+is not nothing, though.  Isabelle checks the antiquotation when it processes
+the theory, so deleting `foo`, or moving it out of reach, breaks the build.
+`unused` reports such an entry with `doc` evidence rather than as plainly dead,
+and `callers --antiquotations foo` lists the sites as rows of their own
+(`[antiq]`, tag `ANTIQ` in `-f tsv`).
+
+Which `foo` a mention names is decided as Isabelle decides it:
+
+- **By name space.**  Facts, constants, types, classes and locales are kept
+  apart, so `@{const foo}` names a `definition foo`, never a `lemma foo`.  A
+  fact antiquotation also reaches the declaration behind a derived fact:
+  `@{thm foo_def}` and `@{thm foo.simps}` depend on `foo`.
+- **By reach.**  The mention is scoped like a citation (see *A citation must
+  be reachable*), so `@{thm foo}` in a theory that cannot see this project's
+  `foo` is evidence for nothing here.
+- **By order.**  A theory is read top to bottom: a mention above its own
+  theory's `foo` names some other `foo`, or none.  The same holds for proof
+  citations.
+- **Only where Isabelle reads it.**  A `(* ... *)` comment and `\<^cancel>`
+  text are never processed, so an antiquotation there counts for nothing.
+
+A term is read for every name in it, so a bound variable that shares a
+constant's name counts too, which errs towards keeping.
 
 ## Layout carries no meaning
 
