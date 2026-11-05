@@ -528,6 +528,7 @@ class CmdFlags:
     evidence: str = "mark"       # --evidence mark|hide (unused) [leaf-evidence]
     spans: bool = False          # --spans (unused --locals) [local-spans]
     external: bool = False       # --external (callers: skip defining theory)
+    antiquotations: bool = False  # --antiquotations (callers) [doc-antiq]
     drop_names_upto: int = _DROP_NAMES_UPTO  # --drop-names-upto (call graph)
     # --reach: "closure" attributes a citation only to declarations the citing
     # theory can SEE; "name" is the old name-only matching, kept so a

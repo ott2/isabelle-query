@@ -342,6 +342,7 @@ def _flags_from_ns(ns: argparse.Namespace) -> CmdFlags:
     f.spans = getattr(ns, "spans", False)
     f.keep_file = getattr(ns, "keep_file", None)
     f.external = getattr(ns, "external", False)
+    f.antiquotations = getattr(ns, "antiquotations", False)
     f.drop_names_upto = getattr(ns, "drop_names_upto", _DROP_NAMES_UPTO)
     f.reach = getattr(ns, "reach", "closure")
     f.sorts = getattr(ns, "sorts", False)
@@ -924,6 +925,11 @@ def _run_show(ns: argparse.Namespace) -> None:
 
 def _run_callers(ns: argparse.Namespace) -> None:
     flags = _flags_from_ns(ns)
+    if flags.antiquotations and flags.recursive:
+        # The closure walks the citation graph, which has no antiquotation
+        # edges; ignoring the flag there would answer a different question.
+        _usage_error("callers: --antiquotations reports direct references "
+                     "only; it does not combine with -r")
     _run_each(ns, "name", lambda secs, n: cmd_callers(secs, n, flags),
               sep="" if flags.fmt == "tsv" else "\n")
 
@@ -1549,6 +1555,14 @@ def _build_parser() -> argparse.ArgumentParser:
                         "own internal cross-references are noise).  Only "
                         "affects the non-recursive form; "
                         "transitive closure via -r ignores this flag.")
+    p.add_argument("--antiquotations", action="store_true",
+                   help="also report NAME where an antiquotation names it: "
+                        "`@{thm}`, `@{const}`, `@{term}`, `@{typ}`, `@{type}` "
+                        "or the `\\<^const>` spelling, in text, comments and "
+                        "ML alike.  Not a proof use, but checked when the "
+                        "theory is processed, so deleting or moving NAME "
+                        "breaks it.  Rows are marked `[antiq]`, tag `ANTIQ` "
+                        "under -f tsv.  Direct references only: not with -r")
     _add_reach_flag(p)
     _add_edge_format_flag(p, "caller", "the caller's citing line; under -r "
                           "its declaration")
@@ -1672,7 +1686,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         "`proposition`), a declaring attribute on its own "
                         "header that hands it to a tool (`[simp]`, `[intro]`, "
                         "`[code]`, a named_theorems name), a document "
-                        "antiquotation naming it (`@{thm foo}`: `doc`).  "
+                        "antiquotation naming it (`@{thm foo}`, `@{const foo}`, "
+                        "`@{term \"foo x\"}`: `doc`).  "
                         "Such entries stop the -r cascade, like --keep; "
                         "`mark` (default) still lists them, tagged "
                         "`[evidence: corollary, simp]`, `hide` drops them, "

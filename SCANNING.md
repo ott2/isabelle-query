@@ -49,13 +49,19 @@ heading keyword *inside* a document block is English, not a command. A `text`
 block citing a textbook — "…follows Kleinberg and Tardos, chapter \"Dynamic
 Programming\"" — declares no chapter, and `outline` does not list one.
 
-A **fact antiquotation** in prose, `@{thm foo}` or `\<^thm>‹foo›`, is not a
-citation either: showing a result in the rendered document is not a proof that
-uses it, so `callers foo` does not list it. It is not nothing, though. The
-author put the result in the document, and `unused` reports such an entry with
-`doc` evidence rather than as plainly dead. The mention is scoped like a
-citation (see *A citation must be reachable*), so `@{thm foo}` in a theory that
-cannot see this project's `foo` is evidence for nothing here.
+An **antiquotation** that names a declaration, in prose, a comment or ML, is
+not a citation either: `@{thm foo}`, `@{const foo}`, `@{term "foo x"}`,
+`@{typ}`, `@{type}`, in either spelling (`\<^const>‹foo›`).  Showing a result
+or a constant in the rendered document is not a proof that uses it, so
+`callers foo` does not list it.  It is not nothing, though.  Isabelle checks
+the antiquotation when it processes the theory, so deleting `foo`, or moving it
+out of reach, breaks the build.  `unused` reports such an entry with `doc`
+evidence rather than as plainly dead, and `callers --antiquotations foo` lists
+the sites as rows of their own (`[antiq]`, tag `ANTIQ` in `-f tsv`).  A term is
+read for every name in it, so a bound variable that shares a constant's name
+counts too, which errs towards keeping.  The mention is scoped like a citation
+(see *A citation must be reachable*), so `@{thm foo}` in a theory that cannot
+see this project's `foo` is evidence for nothing here.
 
 ## Layout carries no meaning
 

@@ -126,8 +126,10 @@ evidence it found for each entry and leaves the verdict to you:
   no evidence of either.
 - **implicit** — its own header hands it to a tool (`lemma foo [simp]:`,
   `[intro]`, `[code]`, a `named_theorems` name), which uses it uncited.
-- **doc** — a fact antiquotation (`@{thm foo}`, `\<^thm>‹foo›`) names it, in a
-  theory that can see it.
+- **doc** — an antiquotation names it, in a theory that can see it: a fact
+  (`@{thm foo}`), or a constant alone or in a term (`@{const foo}`,
+  `\<^const>‹foo›`, `@{term "foo x"}`).  Deleting it breaks that theory's
+  build.  `callers --antiquotations foo` lists the sites.
 
 Such an entry is tagged, e.g. `[evidence: corollary, simp]`, and the `-r`
 cascade never runs through it. `--evidence hide` drops them, leaving the

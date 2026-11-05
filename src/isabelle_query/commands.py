@@ -994,6 +994,58 @@ def _find_callers(sections: list[TheorySection], name: str,
     return results
 
 
+def _find_antiq_callers(sections: list[TheorySection], name: str,
+                        external: bool = False, reach: str = "closure",
+                        ) -> list[tuple[TheorySection, int, str]]:
+    """Where an antiquotation names *name*: `callers --antiquotations`
+    [doc-antiq].
+
+    The rows :func:`_find_callers` leaves out on purpose, since a name shown
+    in a document is not a proof that uses it.  It is still a build
+    dependency: `@{const foo}` is checked when its theory is processed, so
+    deleting `foo`, or moving it out of reach, breaks that theory (#44).
+
+    The same rows as :func:`_find_callers` (section, line, raw text), the
+    line being where the antiquotation starts, one row per line.  Scoped as
+    those are: only theories that can see a declaration of *name*, and
+    under ``external`` none of the files that declare it.  The raw source is
+    read, as `unused`'s `doc` evidence reads it, so text, comments and ML
+    all count, and a body may span lines."""
+    admits = _graph.site_filter(sections, name, reach)
+    if external:
+        def_paths = {p for p, m in _build_def_sites(sections, {name}).items()
+                     if m}
+    results: list[tuple[TheorySection, int, str]] = []
+    for sec in sections:
+        if external and sec.path in def_paths:
+            continue
+        raw = sec.source()
+        text = "\n".join(raw)
+        if name not in text or not admits(sec.theory):
+            continue
+        seen: set[int] = set()
+        for kind, start, _end, body in _graph.doc_antiquotations(text):
+            if name not in _graph.antiquotation_names(kind, body):
+                continue
+            line_no = text.count("\n", 0, start) + 1
+            if line_no not in seen:
+                seen.add(line_no)
+                results.append((sec, line_no, raw[line_no - 1].rstrip()))
+    return results
+
+
+def _with_antiq_hits(sections: list[TheorySection], hits: list,
+                     antiq: list) -> tuple[list, set[tuple[Path, int]]]:
+    """Proof hits and antiquotation hits as one list, in source order, and
+    which of its (path, line) are antiquotation-only.  A line that is a
+    proof hit stays one row, a proof row."""
+    proof = {(s.path, ln) for s, ln, _t in hits}
+    extra = [h for h in antiq if (h[0].path, h[1]) not in proof]
+    order = {id(s): i for i, s in enumerate(sections)}
+    merged = sorted(hits + extra, key=lambda h: (order[id(h[0])], h[1]))
+    return merged, {(s.path, ln) for s, ln, _t in extra}
+
+
 Declarations = list[tuple[TheorySection, Entry]]
 
 
@@ -1560,7 +1612,8 @@ def _edge_tsv(sections: list[TheorySection], subject: str,
     `callees`, whose text output a script could only scrape.
 
     ``rows`` is ``(neighbour, depth, site)``: ``site`` is ``(section, line,
-    enclosing entry)`` for a located hit (plain `callers`, depth 1), or None
+    enclosing entry[, tag])`` for a located hit (plain `callers`, depth 1),
+    the tag replacing the entry's (`ANTIQ`, [doc-antiq]) when given, or None
     for a node located at its declaration: a `callers -r` closure member, and
     every callee.  The theory is the locus label, qualified only as far as it
     must be, so the locus pastes back into `enclosing` like every other locus
@@ -1581,8 +1634,10 @@ def _edge_tsv(sections: list[TheorySection], subject: str,
     resolve = resolve or _first_wins(sections)
     for caller, depth, site in rows:
         if site is not None:
-            sec, line, encl = site
-            located = [(sec, line, encl.tag if encl else "TOPLEVEL")]
+            sec, line, encl, *kind = site
+            tag = (kind[0] if kind and kind[0] else
+                   encl.tag if encl else "TOPLEVEL")
+            located = [(sec, line, tag)]
         else:
             located = [(sec, e.thy_line, e.tag) for sec, e in resolve(caller)]
         if not located:
@@ -1647,11 +1702,19 @@ def cmd_callers(sections: list[TheorySection], name: str,
 
     hits = _find_callers(sections, name, external=flags.external,
                          reach=flags.reach)
+    # Antiquotation rows [doc-antiq]: a build dependency, not a proof use,
+    # so opt-in and marked, and the default output stays as it was.
+    antiq: set[tuple[Path, int]] = set()
+    if flags.antiquotations:
+        hits, antiq = _with_antiq_hits(sections, hits, _find_antiq_callers(
+            sections, name, external=flags.external, reach=flags.reach))
     if tsv:
         rows = []
         for sec, line_no, _text in hits:
             encl = _enclosing_entry(sec, line_no)
-            rows.append((encl.name if encl else None, 1, (sec, line_no, encl)))
+            kind = "ANTIQ" if (sec.path, line_no) in antiq else None
+            rows.append((encl.name if encl else None, 1,
+                         (sec, line_no, encl, kind)))
         _edge_tsv(sections, subject, flags, rows)
         return
     if flags.mode == "count":
@@ -1669,9 +1732,11 @@ def cmd_callers(sections: list[TheorySection], name: str,
     loc_w = max((len(loc) for loc in loci), default=0)
     decls = [(sec, e) for sec in sections for e in sec.entries
              if e.name == name or name in e.bound_names]
+    split = (f" ({len(antiq)} in antiquotations)"
+             if flags.antiquotations else "")
     if len(decls) < 2:
-        print(f"{len(hits)} caller(s) of {name}:\n")
-        _print_caller_rows(hits, loci, loc_w, flags)
+        print(f"{len(hits)} caller(s) of {name}{split}:\n")
+        _print_caller_rows(hits, loci, loc_w, flags, antiq)
         return
     # Declared more than once: group the sites by the declarations each can
     # see, so two unrelated `sim_tape`s are not one list [callee-attribution].
@@ -1687,7 +1752,7 @@ def cmd_callers(sections: list[TheorySection], name: str,
         sec, e = decls[i]
         return f"({e.tag}) — {labels.get(sec.path, sec.theory)} [L{e.thy_line}]"
 
-    print(f"{len(hits)} caller(s) of {name}, "
+    print(f"{len(hits)} caller(s) of {name}{split}, "
           f"which has {len(decls)} declarations:")
     for key in sorted(groups, key=lambda g: (len(g), g)):
         ks = groups[key]
@@ -1699,16 +1764,19 @@ def cmd_callers(sections: list[TheorySection], name: str,
                  f"{name}, any of {len(key)}: {shown}{more}")
         print(f"\n{which}: {len(ks)} caller(s)\n")
         _print_caller_rows([hits[k] for k in ks], [loci[k] for k in ks],
-                           loc_w, flags)
+                           loc_w, flags, antiq)
 
 
 def _print_caller_rows(hits: list, loci: list[str], loc_w: int,
-                       flags: 'CmdFlags') -> None:
-    """The located rows of `callers`, each with its owner and ``-A`` context."""
+                       flags: 'CmdFlags',
+                       antiq: set[tuple[Path, int]] | None = None) -> None:
+    """The located rows of `callers`, each with its owner and ``-A`` context.
+    A row in ``antiq`` is an antiquotation's, marked `[antiq]` [doc-antiq]."""
     n_after = max(0, flags.context)
     for (sec, line_no, text), loc in zip(hits, loci):
         encl = _enclosing_entry(sec, line_no)
-        print(f"  {loc:<{loc_w}}  {_owner_field(encl)}  {text.strip()}")
+        mark = "[antiq] " if antiq and (sec.path, line_no) in antiq else ""
+        print(f"  {loc:<{loc_w}}  {_owner_field(encl)}  {mark}{text.strip()}")
         if n_after > 0:
             src = sec.source()
             # 1-indexed line_no → 0-indexed slice start at line_no

@@ -37,6 +37,7 @@ definition in_set :: nat where "in_set = 0"
 definition in_list :: nat where "in_list = 0"
 definition quiet :: nat where "quiet = 0"
 definition foo :: nat where "foo = 0"
+type_synonym tsyn = nat
 
 end
 """
@@ -51,7 +52,7 @@ text \\<open>The fact @{thm bar} is named here, in prose only.
   @{term "in_term
     0"} spans a line, @{term "{x. x = in_set}"} holds a brace,
   and @{term [show_types] "[in_list]"} has options and a list.
-  @{term "foo\\<^sub>1"} names another constant.\\<close>
+  @{term "foo\\<^sub>1"} names another constant, @{typ tsyn} a type.\\<close>
 
 end
 """
@@ -113,6 +114,72 @@ class UnusedCountsThem(unittest.TestCase):
         self.assertEqual(named, {"bar", "only_cart", "only_at", "in_term",
                                  "in_set", "in_list"})
         self.assertEqual(set(rows) - named, {"quiet", "foo"})
+
+
+
+class CallersReportsThemOnRequest(unittest.TestCase):
+    """`callers --antiquotations` (#44): a row per line where an
+    antiquotation names NAME, tagged `ANTIQ` in TSV and `[antiq]` in text.
+    Client's text block owns no entry, so its rows are `Client:<toplevel>`.
+    Client's lines: `@{thm bar}` 5, `only_cart` and `only_at` 6, the term
+    over two lines starts at 7, `in_set` 8, `in_list` 9, `tsyn` 10."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        (d / "Base.thy").write_text(BASE, encoding="utf-8")
+        (d / "Client.thy").write_text(CLIENT, encoding="utf-8")
+        (d / "ROOT").write_text("session Repro = HOL +\n  theories Client\n",
+                                encoding="utf-8")
+        self.root = str(d)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def run_cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        old = sys.argv
+        sys.argv = ["query", "-R", self.root, *args]
+        code = 0
+        try:
+            with contextlib.redirect_stdout(out), \
+                 contextlib.redirect_stderr(err):
+                try:
+                    cli.main()
+                except SystemExit as e:
+                    code = e.code or 0
+        finally:
+            sys.argv = old
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_default_is_unchanged(self):
+        code, out, _ = self.run_cli("callers", "-c", "bar", "only_at")
+        self.assertEqual((code, out.split()), (0, ["0", "0"]))
+
+    def test_tsv_rows(self):
+        code, out, _ = self.run_cli(
+            "callers", "--antiquotations", "-f", "tsv", "bar", "only_cart",
+            "only_at", "in_term", "in_set", "in_list", "tsyn", "foo")
+        self.assertEqual(code, 0)
+        row = "{}\tClient:<toplevel>\tANTIQ\tClient\tRepro\t1\tClient:{}"
+        self.assertEqual(out.splitlines(), [
+            row.format("bar", 5), row.format("only_cart", 6),
+            row.format("only_at", 6), row.format("in_term", 7),
+            row.format("in_set", 8), row.format("in_list", 9),
+            row.format("tsyn", 10)])                 # foo: none
+
+    def test_text_rows_are_marked(self):
+        _, out, _ = self.run_cli("callers", "--antiquotations", "only_at")
+        lines = out.splitlines()
+        self.assertEqual(lines[0],
+                         "1 caller(s) of only_at (1 in antiquotations):")
+        self.assertIn("[antiq] So are", lines[2])
+
+    def test_not_with_r(self):
+        code, out, err = self.run_cli("callers", "-r", "--antiquotations",
+                                      "bar")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("-r", err)
 
 
 if __name__ == "__main__":
