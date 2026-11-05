@@ -85,6 +85,8 @@ class TheScanner(unittest.TestCase):
         self.assertEqual(names("typ", " \"'a list\""), {"list"})
         self.assertEqual(names("term", ' "?x + f\\<^sub>1"'),
                          {"f\\<^sub>1"})
+        # The cartouche spelling's delimiters are not words: no `open`.
+        self.assertEqual(names("term", "\\<open>f x\\<close>"), {"f", "x"})
         self.assertEqual(names("thm", " foo(2)[OF bar] Thy.baz",
                                frozenset({"Thy"})), {"foo", "baz"})
 

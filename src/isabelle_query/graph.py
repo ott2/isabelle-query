@@ -916,6 +916,7 @@ _ANTIQ_START_RE = re.compile(
     r"@\{\s*(" + "|".join(_ANTIQ_KINDS) + r")(?![\w'])"
     r"|\\<\^(" + "|".join(_ANTIQ_KINDS) + r")>\s*(?=\\<open>|‹)")
 _OPEN, _CLOSE = ("\\<open>", "‹"), ("\\<close>", "›")
+_CARTOUCHE_DELIM_RE = re.compile(r"\\<(?:open|close)>")
 _ANTIQ_ATTRS_RE = re.compile(r"\[[^\]]*\]")
 _ANTIQ_NAME_RE = re.compile(r"[A-Za-z][\w'.]*")
 # A term's options come first (`@{term [show_types] "x"}`); a later `[` is
@@ -1055,6 +1056,10 @@ def antiquotation_names(kind: str, body: str,
     spaces = _KIND_SPACES[kind]
     body = _ANTIQ_OPTIONS_RE.sub(" ", body, count=1) \
         if _ANTIQ_OPTIONS_RE.match(body) else body
+    # The cartouche delimiters are no name characters (`ISA_MARKUP` leaves
+    # them out), so the atom would read the `open` of `\<open>` as a word.
+    if "\\<" in body:
+        body = _CARTOUCHE_DELIM_RE.sub(" ", body)
     return {m.group(1): spaces for m in SYM_NAME_RE.finditer(body)
             if not m.group(1)[0].isdigit()
             and body[m.start() - 1:m.start()] not in ("'", "?")}
