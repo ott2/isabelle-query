@@ -598,13 +598,21 @@ class _Visibility:
         # that spelling's `name` and asks about it like any other.
         self.declared_in: dict[str, set[str]] = {}
         self.public_in: dict[str, set[str]] = {}
+        # file -> {name: the first line declaring it there} [decl-order].
+        # Keyed by PATH, not theory name, because a name is not an identity
+        # over a corpus [name-is-not-identity]: the question is whether THIS
+        # file has declared the name by the line being read.
+        self._first: dict[Path, dict[str, int]] = {}
         for sec in sections:
+            first = self._first.setdefault(sec.path, {})
             for e in sec.entries:
                 names = [e.name] + (e.bound_names if bound_names else [])
                 for n in names:
                     self.declared_in.setdefault(n, set()).add(sec.theory)
                     if e.visibility != "private":
                         self.public_in.setdefault(n, set()).add(sec.theory)
+                    if e.thy_line > 0 and e.thy_line < first.get(n, 1 << 30):
+                        first[n] = e.thy_line
 
     def _read_imports(self, theory: str) -> list[str] | None:
         """The in-project imports of EVERY section of this name, unioned, or
@@ -724,10 +732,54 @@ class _Visibility:
             return True                 # unknown closure: do not drop an edge
         return not public.isdisjoint(reach)
 
+    def lines_in(self, sec: TheorySection) -> dict[str, int]:
+        """``{name: first declaring line}`` for one file, the ``own`` that
+        :meth:`sees_at` reads.  Fetched once per section, so the per-site
+        test is a dict lookup."""
+        return self._first.get(sec.path, {})
+
+    def sees_at(self, theory: str, name: str, line: int,
+                own: dict[str, int]) -> bool:
+        """:meth:`sees`, for a site at ``line`` of the file whose
+        :meth:`lines_in` is ``own`` [decl-order].
+
+        Isabelle reads a theory top to bottom, so a declaration below the
+        site is not yet in scope there.  A site above its own file's `foo`
+        names some other `foo`, an import's, or none and fails to check.
+        Either way it does not name this one, and only a declaration in
+        another theory can keep the edge.  The graph has one node per name,
+        so when an import also declares `foo` the edge stays, and correctly:
+        it goes to `foo`.  What drops is the edge whose only candidate was
+        the declaration below.
+
+        A name declared in another file of the same theory name, and not in
+        this one, keeps :meth:`sees`'s answer: the names cannot be told
+        apart here, and the rule may only drop where it is sure."""
+        if self.mode != "closure":
+            return True
+        decl = self.declared_in.get(name)
+        if not decl:
+            return True
+        first = own.get(name)
+        if first is None:
+            if theory in decl:
+                return True
+            public = self.public_in.get(name)
+        elif first < line:
+            return True                 # declared above: the fast path
+        else:
+            public = (self.public_in.get(name) or set()) - {theory}
+        if not public:
+            return False
+        reach = self.depths(theory)
+        if reach is None:
+            return True
+        return not public.isdisjoint(reach)
+
 
 def site_filter(sections: list[TheorySection], name: str,
                 reach: str = "closure", *,
-                vis: "_Visibility | None" = None) -> Callable[[str], bool]:
+                vis: "_Visibility | None" = None) -> "_SiteFilter":
     """Which theories a single-name scan may report a hit for ``name`` in.
 
     The per-theory predicate behind `callers`, `instances` and `codeqs`: the
@@ -750,11 +802,9 @@ def site_filter(sections: list[TheorySection], name: str,
     `src/HOL` turned a 6 s request into 90 s.
     """
     if reach != "closure":
-        return lambda theory: True
+        return _SiteFilter(None, name)
     if vis is not None:
-        if name not in vis.declared_in:
-            return lambda theory: True
-        return lambda theory: vis.sees(theory, name)
+        return _SiteFilter(vis if name in vis.declared_in else None, name)
     declared = False
     for sec in sections:
         for e in sec.entries:
@@ -764,9 +814,33 @@ def site_filter(sections: list[TheorySection], name: str,
         if declared:
             break
     if not declared:
-        return lambda theory: True
-    vis = _Visibility(sections, reach, bound_names=True)
-    return lambda theory: vis.sees(theory, name)
+        return _SiteFilter(None, name)
+    return _SiteFilter(_Visibility(sections, reach, bound_names=True), name)
+
+
+class _SiteFilter:
+    """What :func:`site_filter` returns: ``admits(theory)``, the per-theory
+    test a scan runs once per section, and ``admits.at(sec, line)``, the
+    per-site test for a scan that knows the line [decl-order].  A
+    declaration below the site in the same file is not yet in scope there
+    (:meth:`_Visibility.sees_at`).  ``vis`` None admits everything."""
+
+    __slots__ = ("vis", "name", "_sec", "_own")
+
+    def __init__(self, vis: "_Visibility | None", name: str):
+        self.vis, self.name = vis, name
+        self._sec: TheorySection | None = None
+        self._own: dict[str, int] = {}
+
+    def __call__(self, theory: str) -> bool:
+        return self.vis is None or self.vis.sees(theory, self.name)
+
+    def at(self, sec: TheorySection, line: int) -> bool:
+        if self.vis is None:
+            return True
+        if sec is not self._sec:
+            self._sec, self._own = sec, self.vis.lines_in(sec)
+        return self.vis.sees_at(sec.theory, self.name, line, self._own)
 
 
 # The antiquotations that name a declaration, and so fail the build when it
@@ -869,8 +943,9 @@ def antiquotation_names(kind: str, body: str) -> set[str]:
             and body[m.start() - 1:m.start()] not in ("'", "?")}
 
 
-def doc_mentions(sections: list[TheorySection]) -> dict[str, set[str]]:
-    r"""``{name: the theories naming it in an antiquotation}``
+def doc_mentions(sections: list[TheorySection]
+                 ) -> dict[str, list[tuple[TheorySection, int]]]:
+    r"""``{name: the (section, line) of each antiquotation naming it}``
     [leaf-evidence] [doc-antiq].
 
     The citation graph strips these on purpose (`antiq_re` below): a name
@@ -883,12 +958,16 @@ def doc_mentions(sections: list[TheorySection]) -> dict[str, set[str]]:
 
     A mention is reduced to the name it points at
     (:func:`antiquotation_names`).  Which declaration it can mean is the
-    caller's question (:meth:`_Visibility.sees`)."""
-    out: dict[str, set[str]] = {}
+    caller's question (:meth:`_Visibility.sees_at`), and the line is part of
+    it: a mention above its own file's declaration names another
+    [decl-order]."""
+    out: dict[str, list[tuple[TheorySection, int]]] = {}
     for sec in sections:
-        for kind, _s, _e, body in doc_antiquotations("\n".join(sec.source())):
+        text = "\n".join(sec.source())
+        for kind, start, _e, body in doc_antiquotations(text):
+            line = text.count("\n", 0, start) + 1
             for n in antiquotation_names(kind, body):
-                out.setdefault(n, set()).add(sec.theory)
+                out.setdefault(n, []).append((sec, line))
     return out
 
 
@@ -1026,6 +1105,7 @@ def _build_call_graph(sections: list[TheorySection],
         t_ranges = text_ranges.get(sec.path, [])
         d_map = def_sites.get(sec.path, {})
         idx = line_index.get(sec.path, [])
+        own = vis.lines_in(sec)        # [decl-order]
         # Flatten the prose ranges into a 1-indexed line mask: a single O(1)
         # lookup per line replaces the old `any(line_no in r for r in t_ranges)`
         # rescan (~65M range tests at AFP scale).  Slice-assignment marks each
@@ -1094,7 +1174,7 @@ def _build_call_graph(sections: list[TheorySection],
                 # line, where `name_set` holds every name in the corpus.  The
                 # closure is cached for the theory being scanned, so the walk
                 # is paid once per theory and this is a set test.
-                if not vis.sees(sec.theory, name):
+                if not vis.sees_at(sec.theory, name, line_no, own):
                     continue
                 callers[name].add(caller_name)
                 callees.setdefault(caller_name, set()).add(name)

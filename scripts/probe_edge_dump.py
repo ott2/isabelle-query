@@ -15,7 +15,8 @@ first on `sys.path`, so run the old tree's copy of the script:
     python .stage/old/scripts/probe_edge_dump.py > old.tsv
     python scripts/probe_edge_dump.py > new.tsv
 
-The stderr line gives the load and graph-build times.
+The stderr line gives the load and graph-build times.  Compare with
+`LC_ALL=C comm -23 old.tsv new.tsv` (dropped) and `-13` (added).
 """
 
 from __future__ import annotations
@@ -47,10 +48,12 @@ def main() -> int:
     t2 = time.perf_counter()
     print(f"# {len(sections)} theories, {len(g.all_names)} names, reach={reach}"
           f"; load {t1 - t0:.1f}s, graph {t2 - t1:.1f}s", file=sys.stderr)
-    out = sys.stdout
-    for callee in sorted(g.callers):
-        for caller in sorted(g.callers[callee]):
-            out.write(f"{caller}\t{callee}\n")
+    # Sorted as LINES, in code-point order (`LC_ALL=C sort`), so `comm`
+    # reads the files as they are.  Ordering by callee first, as this once
+    # did, made `comm` report edges both added and dropped that were neither.
+    sys.stdout.writelines(sorted(f"{caller}\t{callee}\n"
+                                 for callee, cs in g.callers.items()
+                                 for caller in cs))
     return 0
 
 

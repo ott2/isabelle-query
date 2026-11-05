@@ -323,18 +323,6 @@ in `CONTRIBUTING.md`.
       would remove.  So frame it as a correctness fix, column-precise
       blocks, and time it, rather than as a speedup.
 
-- [ ] `[doc-antiq-order]` An antiquotation **above** its declaration, in the
-      same theory, cannot name it, but `unused` counts it as `doc` evidence
-      and `callers --antiquotations` lists it.  Visibility is decided per
-      theory (`_Visibility.sees`), and a theory sees its own declarations
-      wherever they sit.  Seen in Simpl (Isabelle2025-2): UserGuide's
-      `@{term init}` at line 201 is evidence for the `init` declared at
-      line 1489.  It errs towards keeping, and `@{thm}` evidence has had
-      the same blind spot since `[leaf-evidence]`.  The fix: a mention in
-      the declaring theory counts only below the declaration line, which
-      means `doc_mentions` keeps the line, not just the theory.  Not
-      measured corpus-wide.
-
 ## Done
 
 Nothing — by design. Completed work is recorded in its commit messages, which

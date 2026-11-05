@@ -990,6 +990,9 @@ def _find_callers(sections: list[TheorySection], name: str,
             # A name shared with a proof method earns its mention positionally.
             if shadowed and not _shadowed_uses_on_line(line, {name}):
                 continue
+            # Above this file's own declaration it names another [decl-order].
+            if not admits.at(sec, line_no):
+                continue
             results.append((sec, line_no, raw[line_no_0].rstrip()))
     return results
 
@@ -1028,7 +1031,7 @@ def _find_antiq_callers(sections: list[TheorySection], name: str,
             if name not in _graph.antiquotation_names(kind, body):
                 continue
             line_no = text.count("\n", 0, start) + 1
-            if line_no not in seen:
+            if line_no not in seen and admits.at(sec, line_no):
                 seen.add(line_no)
                 results.append((sec, line_no, raw[line_no - 1].rstrip()))
     return results
@@ -2298,11 +2301,13 @@ def _evidence(sections: list[TheorySection], reach: str = "closure"
     # only when some antiquotation names a declared entry.
     mentions = _graph.doc_mentions(sections)
     declared = {e.name for sec in sections for e in sec.entries}
-    mentions = {n: ts for n, ts in mentions.items() if n in declared}
+    mentions = {n: at for n, at in mentions.items() if n in declared}
     if mentions:
         vis = _graph._Visibility(sections, reach)
-        for n, theories in mentions.items():
-            if any(vis.sees(t, n) for t in sorted(theories)):
+        own = {}
+        for n, at in mentions.items():
+            if any(vis.sees_at(sec.theory, n, line, own.setdefault(
+                    sec.path, vis.lines_in(sec))) for sec, line in at):
                 out.setdefault(n, []).append("doc")
     return out
 
