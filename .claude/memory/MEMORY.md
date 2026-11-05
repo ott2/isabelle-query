@@ -27,3 +27,4 @@
 - [Autoclose issues in commits](autoclose-issues-in-commits.md) — a commit addressing a GitHub issue carries `Fixes #N` so it closes on push to main
 - [Old-code diagnostics without worktrees](old-code-diagnostics-without-worktrees.md) — test against HEAD via `git archive HEAD src | tar -x -C .stage`; worktree add/remove trips the classifier
 - [Check before creating files](check-before-creating-files.md) — `ls` a scripts/ or tests/ path before Write; "updated" means you overwrote a tracked file
+- [Accuracy fixes are not costs](accuracy-fixes-are-not-costs.md) — a fix that moves figures only improves accuracy; weigh performance, not the movement
