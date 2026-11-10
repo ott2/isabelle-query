@@ -33,14 +33,14 @@ grammar (`theory:line`, `theory:A..B`), so the tool's output is valid input.
 
 The package is a strict module DAG — each imports only from earlier links:
 
-    model → parsing → graph → render → commands → cli
+    model → parsing → lexicon → graph → render → commands → cli
 
 with `shape` + `shape_cmds` (the proof-shape family), `premises` (a goal
 statement read premise by premise, for `show --premises`; just above
 `parsing`, below `render`), `_prog` (the invoked
 command name — a leaf that imports nothing, so any layer can reach it), `api`
-(the five-name supported import surface, sitting just above `parsing` and
-importing nothing else — see `CONTRIBUTING.md`), and `scripts/` (offline
+(the supported import surface, sitting just above `lexicon` and importing
+nothing else — see `CONTRIBUTING.md`), and `scripts/` (offline
 table-generation + dev utilities) as siblings.
 
 Session/ROOT discovery and the import closure are **not query's code**: the
@@ -63,6 +63,10 @@ That is what a version range was standing in for.
   mid-term).  Nothing in the grammar uses indentation as evidence.  Block
   structure comes from the `begin`/`end` pair every target block shares
   (`_block_stacks`), which is what gives an entry its `blocks` / `in_target`.
+- `lexicon` — where a name starts and ends (Isabelle's `Lexicon.scan_longid`,
+  exactly), which words are keywords (Pure's table plus the generated
+  per-theory `_distribution_keywords`), and the lexical antiquotation
+  matching that `graph` and `api` share.
 - `graph` — usage analysis + the shared step-scanner primitives.
 - `render` / `commands` / `cli` — formatting, the `cmd_*` handlers, the argparse
   facade (which re-exports lower-layer names so tests reach `cli.X`).

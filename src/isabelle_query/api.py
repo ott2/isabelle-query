@@ -1,9 +1,9 @@
-"""The supported import surface for query's Isar span parsing.
+r"""The supported import surface for query's Isar span parsing.
 
-Everything else in the package is internal and moves without notice.  These
-five names do not: they follow the same policy as the CLI, so a change that
-breaks them takes the **major** version slot (SemVer, from 1.0.0; see the
-release notes in `pyproject.toml`'s bump commit).
+Everything else in the package is internal and moves without notice.  The
+names in ``__all__`` do not: they follow the same policy as the CLI, so a
+change that breaks them takes the **major** version slot (SemVer, from 1.0.0;
+see the release notes in `pyproject.toml`'s bump commit).
 
     from isabelle_query.api import (parse_theory, parse_root, resolve_theories,
                                     Entry, TheorySection)
@@ -24,7 +24,7 @@ as an entry; preambles before `compute_spans`, because they fix each entry's
 `src_start` and so decide which entry a leading `text` block is charged to;
 `_proof_extent` last, because it needs `thy_end` as a search bound.  A consumer
 composing the scanners itself would have to rediscover that, and get it subtly
-wrong in the way a hand-rolled `\\<close>\\s*$` gets nested cartouches wrong.
+wrong in the way a hand-rolled `\<close>\s*$` gets nested cartouches wrong.
 So the composition is what is exported.  Ask for a name here if a span you
 need is genuinely not reachable from these objects; do not import it from
 `parsing`.
@@ -50,6 +50,53 @@ keeps every guarantee of `cut_span`, `None` included.
 session, the shortest unique directory-qualified suffix in a corpus.
 `resolve_theories` maps it back to files exactly as the CLI does, so a span a
 `--spans` column printed can be edited without a second, drifting reader.
+
+**Names and keywords (#42).**  `name_occurrences(section)` gives every
+name Isabelle reads in a theory, each a `NameOccurrence` with its line, its
+columns, its dotted `parts` and, inside an antiquotation, the antiquotation's
+`kind`.  Prose, comments, cancelled text and ML code are not read, but an
+antiquotation in any of them that Isabelle checks is.  Where a name starts
+and ends is Isabelle's own rule, `Lexicon.scan_longid`, which outer and
+inner syntax share: `foo` is not in `foo_bar`, `foo'`, `foo\<^sub>1` or
+`\<Gamma>foo`, and in `using foo.` the `.` is the proof.  `scan_names(text)`
+applies the same rule to a bare string, so `list(scan_names(w)) == [(0,
+len(w), w)]` says that ``w`` is one name.  `is_keyword(word, sections)` says
+whether ``word`` is an outer-syntax keyword somewhere in a project: Pure's
+keywords, the ones the distribution theories it imports declare (with their
+imports, so `fun` under Main and `domain` only under HOLCF), and its own
+headers'.  For many words, take `active_keywords(sections)` once.  Symbolic
+identifiers (`*`, `**`) are not names to either: they name only proof-local
+facts, and in a term they are operators.
+
+**Renaming a declaration: the names it minted.**  A name's text is not the
+whole of what refers to a declaration.  Declaring one mints others, and a
+rename that touches only the occurrences spelled OLD leaves those behind:
+
+- *Dotted:* `fun foo` gives `foo.simps`, `foo.induct`, `foo.cases`,
+  `foo.elims`; `datatype t` gives `t.induct`, `t.inject`, `t.distinct`,
+  `t.split`, ...; `inductive P` gives `P.intros`, `P.induct`, `P.cases`;
+  `locale L` gives `L.intro`; `lift_definition f` gives `f.rep_eq`.  These
+  are long names whose FIRST part is OLD, and `parts` finds them: rename
+  ``parts[0]``.  The LAST part is OLD in `Theory.foo` and `L.foo`, where a
+  theory or locale qualifies the name.  A middle part can be either.
+- *Underscore-joined:* `definition foo` gives the fact `foo_def`;
+  `typedef t` gives `Rep_t`, `Abs_t`, `Rep_t_inverse`, `type_definition_t`;
+  `locale L` gives `L_axioms`, `L_axioms_def`, `L_def`; `datatype t` gives
+  the constants `case_t`, `rec_t`, `map_t`, `set_t`, `rel_t`; `record r`
+  gives `r_ext`.  Each of these is ONE identifier, a different name from
+  OLD, so no occurrence of OLD covers it.  Over the Isabelle2025-2 AFP,
+  `_def` alone ends a name on some 327,000 lines.
+
+query's own dependency analysis maps `foo_def` and `foo_defs` back to `foo`,
+and reads `foo.simps` by its prefix [antiq-namespace]; the other minted
+names it does not map.  The list above is not complete, and each package
+(`datatype`, `record`, `lifting`, ...) mints its own.  So a renamer should
+not guess: take the occurrences whose text is OLD or whose `parts` contain
+OLD as rename sites, and report every other name that has OLD as one of its
+`_`-separated pieces (`foo_def`, `Rep_foo`, `case_foo`) for a decision,
+rather than renaming it or passing over it.  A bound variable spelled OLD
+(`\<lambda>foo. ...`, `fix foo`) is the same text as the constant, and
+renaming it is harmless only if every occurrence in its scope is renamed.
 """
 
 from __future__ import annotations
@@ -60,6 +107,8 @@ from typing import NamedTuple
 
 from isabelle_layout import default_t_dir
 
+from isabelle_query.lexicon import (
+    NameOccurrence, active_keywords, is_keyword, name_occurrences, scan_names)
 from isabelle_query.model import Entry, TheorySection, _TheoryIndex
 from isabelle_query.parsing import (
     _CUSTOM_COMMANDS,
@@ -69,8 +118,9 @@ from isabelle_query.parsing import (
     _sections_from_dir,
 )
 
-__all__ = ["Entry", "TheorySection", "parse_root", "parse_theory",
-           "resolve_theories"]
+__all__ = ["Entry", "NameOccurrence", "TheorySection", "active_keywords",
+           "is_keyword", "name_occurrences", "parse_root", "parse_theory",
+           "resolve_theories", "scan_names"]
 
 
 def parse_theory(theory: str, path: Path,

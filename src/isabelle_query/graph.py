@@ -47,6 +47,9 @@ from isabelle_layout import parse_thy_imports
 from isabelle_query.parsing import (
     ISA_SYMBOL, ISA_WORD_CHAR, SYM_IDENT, SYM_NAME_RE, SYMBOLIC_KEYWORDS,
     _line_mask)
+from isabelle_query.lexicon import (  # noqa: F401  (re-exported)
+    ANTIQ_OPTIONS_RE, FACT_ANTIQ_KINDS, FIRST_NAME_KINDS, NAME_ANTIQ_KINDS,
+    _brace_end, _cartouche_end, doc_antiquotations, unchecked_at)
 
 
 def _build_line_index(sections: list[TheorySection]
@@ -869,15 +872,6 @@ class _SiteFilter:
         return self.vis.sees_at(sec.theory, self.name, line, self._own)
 
 
-# The antiquotations that name a declaration, and so fail the build when it
-# goes [doc-antiq].  FACT kinds name facts: `@{thm foo}`, `@{thm [display]
-# foo bar}`, `@{thms foo}`, the style forms, `\<^thm>‹foo›`.  The others
-# name constants, types, classes or locales, alone (`@{const foo}`, `@{type
-# foo}`) or inside a term or type (`@{term "foo x"}`, `@{typ "'a foo"}`).
-# Not `@{lemma "P" by simp}`, which states a proposition rather than naming
-# one.
-FACT_ANTIQ_KINDS = frozenset({"thm", "thms", "thm_style", "named_thms"})
-
 # Isabelle's name spaces [antiq-namespace]: `definition foo` and `lemma foo`
 # can coexist, and `@{const foo}` can only mean the first.  Which entries
 # declare into each, by tag and by binding kind (`Entry.bindings`).  An
@@ -927,21 +921,13 @@ _KIND_SPACES = {
     "class": frozenset({CLASS}),
     "locale": frozenset({LOCALE}),
 }
-# ML's `\<^Const>‹plus T›` and `\<^Type>‹list T›` name one declaration, then
-# take ML variables for its type arguments: only the first name is read.
-_FIRST_NAME_KINDS = frozenset({"Const", "Const_", "Type", "Type_"})
-_ANTIQ_KINDS = sorted(FACT_ANTIQ_KINDS | set(_KIND_SPACES),
-                      key=lambda k: -len(k))   # longest first: `thms` > `thm`
-_ANTIQ_START_RE = re.compile(
-    r"@\{\s*(" + "|".join(_ANTIQ_KINDS) + r")(?![\w'])"
-    r"|\\<\^(" + "|".join(_ANTIQ_KINDS) + r")>\s*(?=\\<open>|‹)")
-_OPEN, _CLOSE = ("\\<open>", "‹"), ("\\<close>", "›")
+# Every kind the lexer finds is one this module reads.
+assert NAME_ANTIQ_KINDS == FACT_ANTIQ_KINDS | set(_KIND_SPACES)
+_FIRST_NAME_KINDS = FIRST_NAME_KINDS
 _CARTOUCHE_DELIM_RE = re.compile(r"\\<(?:open|close)>")
 _ANTIQ_ATTRS_RE = re.compile(r"\[[^\]]*\]")
 _ANTIQ_NAME_RE = re.compile(r"[A-Za-z][\w'.]*")
-# A term's options come first (`@{term [show_types] "x"}`); a later `[` is
-# the term's own list syntax, whose names count.
-_ANTIQ_OPTIONS_RE = re.compile(r"\s*\[[^\]]*\]")
+_ANTIQ_OPTIONS_RE = ANTIQ_OPTIONS_RE
 # A fact a constant's or a type's declaration mints, spelled with a suffix:
 # `foo_def` is `definition foo`'s.  The dotted family (`foo.simps`,
 # `foo.induct`) is read from the prefix instead.
@@ -966,74 +952,6 @@ def space_names(e: Entry, space: str, bindings: bool = True) -> list[str]:
     if kinds:
         names += [n for n, k in e.bindings if k in kinds]
     return names
-
-
-def _cartouche_end(text: str, i: int) -> int:
-    """Index just past the cartouche that opens at ``text[i]``, nested
-    cartouches counted; the end of the text if it never closes."""
-    depth = 0
-    n = len(text)
-    while i < n:
-        o = next((o for o in _OPEN if text.startswith(o, i)), None)
-        if o:
-            depth += 1
-            i += len(o)
-            continue
-        c = next((c for c in _CLOSE if text.startswith(c, i)), None)
-        if c:
-            depth -= 1
-            i += len(c)
-            if depth == 0:
-                return i
-            continue
-        i += 1
-    return n
-
-
-def _brace_end(text: str, i: int) -> int:
-    """Index just past the `}` that closes an `@{` body starting at ``i``.
-
-    A `}` inside a string or a cartouche is the body's own, as in `@{term
-    "{x. P x}"}`: 239 `@{term}` and 23 `@{thm}` bodies in afp-devel hold one
-    (`scripts/probe_antiquotations.py`), and a `[^}]*` body stopped there."""
-    n = len(text)
-    while i < n:
-        ch = text[i]
-        if ch == "}":
-            return i + 1
-        if ch == '"':
-            i += 1
-            while i < n and text[i] != '"':
-                i += 2 if text[i] == "\\" else 1
-            i += 1
-        elif text.startswith(_OPEN, i):
-            i = _cartouche_end(text, i)
-        else:
-            i += 1
-    return n
-
-
-def unchecked_at(sec: TheorySection, line: int, col: int) -> bool:
-    """Is ``line``:``col`` inside a comment, or cancelled or raw text, which
-    Isabelle never reads [antiq-comment]?  The tokenizer records those
-    regions (`TheorySection.unread_spans`); an ML body and a `\\<comment>`
-    note are read, and are not among them."""
-    return any(lo <= col < hi for lo, hi in sec.unread_spans.get(line, ()))
-
-
-def doc_antiquotations(text: str):
-    """Yield ``(kind, start, end, body)`` for each name-bearing antiquotation
-    in ``text`` [doc-antiq], in either spelling.  Bodies may span lines: the
-    caller passes a whole theory, not a line."""
-    if "@{" not in text and "\\<^" not in text:
-        return
-    for m in _ANTIQ_START_RE.finditer(text):
-        if m.group(1):
-            end = _brace_end(text, m.end())
-            yield m.group(1), m.start(), end, text[m.end():end - 1]
-        else:
-            end = _cartouche_end(text, m.end())
-            yield m.group(2), m.start(), end, text[m.end():end]
 
 
 def antiquotation_names(kind: str, body: str,

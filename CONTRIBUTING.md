@@ -202,8 +202,9 @@ cannot map is not a missing feature but a hole, and a hole prunes
 
 ## Library contract (`isabelle_query.api`)
 
-**Five names are supported: `parse_theory`, `parse_root`,
-`resolve_theories`, `Entry`, `TheorySection`.** They carry the same promise as the CLI — a change that
+**Ten names are supported: `parse_theory`, `parse_root`,
+`resolve_theories`, `Entry`, `TheorySection`, `name_occurrences`,
+`NameOccurrence`, `scan_names`, `is_keyword`, `active_keywords`.** They carry the same promise as the CLI — a change that
 breaks them takes the **major** version slot (SemVer, from 1.0.0). Everything else in
 the package is internal and may move in any release.
 
@@ -225,7 +226,13 @@ scanners run in (tokenizer first, preambles before `compute_spans`,
 `_proof_extent` last). Pinning the pieces would have frozen the most volatile
 module in the package while promising nothing extra.
 
-`api` imports only from `model` and `parsing`, and `__init__.py` re-exports
+The last five (#42) answer where a name starts and ends, by Isabelle's own
+rule (`Lexicon.scan_longid`, which outer and inner syntax share), and which
+words are keywords.  They live in `lexicon`, which imports only `model` and
+the generated tables, so that `graph` and `api` share one definition
+[api-names] [api-keywords].
+
+`api` imports only from `model`, `parsing` and `lexicon`, and `__init__.py` re-exports
 nothing — `import isabelle_query` must stay free of the parser, which `_prog`
 and the version lookup do not want. Both are enforced by that test file.
 

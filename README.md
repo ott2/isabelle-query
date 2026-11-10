@@ -285,8 +285,10 @@ for e in sec.entries:
     print(e.name, e.src_start, e.thy_end, e.proof_line, e.body_end_line)
 ```
 
-`isabelle_query.api` exports exactly five names — `parse_theory`, `parse_root`,
-`resolve_theories`, `Entry`, `TheorySection` — and **they follow the same policy as the CLI: a
+`isabelle_query.api` exports exactly ten names — `parse_theory`, `parse_root`,
+`resolve_theories`, `Entry`, `TheorySection`, and for tools that edit names,
+`name_occurrences`, `NameOccurrence`, `scan_names`, `is_keyword`,
+`active_keywords` — and **they follow the same policy as the CLI: a
 change that breaks them takes the major version slot.** Nothing else in the
 package is supported; import from `isabelle_query.parsing` and any release may
 move it.
@@ -298,6 +300,15 @@ keyword table is session-wide, so a single theory parsed alone cannot see a
 custom command a sibling declares: whenever the answer must match `query -R`,
 use `parse_root`, or `parse_theory(..., root=DIR)`, which reads every header
 under `DIR` but parses only the one theory.
+
+`name_occurrences(sec)` gives every name Isabelle reads in a theory, with its
+line, columns and dotted parts. It follows Isabelle's own identifier rule, so
+`foo` is not in `foo_bar`, `foo'` or `foo\<^sub>1`, and it skips prose,
+comments and ML code but not the antiquotations in them. `is_keyword(word,
+sections)` says whether a word is an outer-syntax keyword in a project,
+counting what it imports from the distribution. A rename has to deal with
+the names a declaration mints as well (`foo_def`, `foo.simps`, `Rep_t`);
+the `api` module docstring says how.
 
 A tool that **edits** by entry should cut `e.cut_span`: the preamble through
 the end of the proof, never reaching the next entry. It is `None` when no line

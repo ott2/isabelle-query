@@ -33,11 +33,15 @@ from pathlib import Path
 
 from isabelle_query import api
 
-# The five exported names, and what each has to be.  `resolve_theories`
-# reads a locus's THEORY as the CLI does (#34) [theory-candidates].
+# The exported names, and what each has to be.  `resolve_theories`
+# reads a locus's THEORY as the CLI does (#34) [theory-candidates].  The
+# name scanner and the keyword test are #42's [api-names] [api-keywords].
 SURFACE = [("parse_theory", "callable"), ("parse_root", "callable"),
            ("resolve_theories", "callable"),
-           ("Entry", "class"), ("TheorySection", "class")]
+           ("Entry", "class"), ("TheorySection", "class"),
+           ("name_occurrences", "callable"), ("scan_names", "callable"),
+           ("NameOccurrence", "class"), ("is_keyword", "callable"),
+           ("active_keywords", "callable")]
 
 # Fields a consumer of the spans depends on.  Named here rather than left to
 # `Entry`'s definition, so removing one is a deliberate act: these are the
@@ -368,16 +372,26 @@ class ImportingThePackageStaysFree(unittest.TestCase):
 
 
 class TheModuleDagStillHolds(unittest.TestCase):
-    """`api` imports only from `model` and `parsing` — a leaf on the DAG."""
+    """`api` imports only from `model`, `parsing` and `lexicon` — a leaf on
+    the DAG — and `lexicon` only from `model` and the generated tables."""
+
+    def imports_of(self, module):
+        import ast
+        src = Path(importlib.import_module(module).__file__)
+        return {n.module for n in ast.walk(ast.parse(src.read_text()))
+                if isinstance(n, ast.ImportFrom) and n.module
+                and n.module.startswith("isabelle_query")}
 
     def test_api_imports_stay_below_it(self):
-        import ast
-        src = Path(importlib.import_module("isabelle_query.api").__file__)
-        allowed = {"isabelle_query.model", "isabelle_query.parsing"}
-        found = {n.module for n in ast.walk(ast.parse(src.read_text()))
-                 if isinstance(n, ast.ImportFrom) and n.module
-                 and n.module.startswith("isabelle_query")}
-        self.assertEqual(found - allowed, set())
+        allowed = {"isabelle_query.model", "isabelle_query.parsing",
+                   "isabelle_query.lexicon"}
+        self.assertEqual(self.imports_of("isabelle_query.api") - allowed,
+                         set())
+
+    def test_lexicon_imports_stay_below_it(self):
+        allowed = {"isabelle_query", "isabelle_query.model"}
+        self.assertEqual(self.imports_of("isabelle_query.lexicon") - allowed,
+                         set())
 
 
 if __name__ == "__main__":
