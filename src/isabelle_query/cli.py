@@ -341,6 +341,10 @@ def _flags_from_ns(ns: argparse.Namespace) -> CmdFlags:
     f.evidence = getattr(ns, "evidence", "mark")
     f.spans = getattr(ns, "spans", False)
     f.keep_file = getattr(ns, "keep_file", None)
+    f.assume_deleted = frozenset(
+        n.strip() for arg in getattr(ns, "assume_deleted", None) or []
+        for n in arg.split(",") if n.strip())
+    f.assume_deleted_file = getattr(ns, "assume_deleted_file", None)
     f.external = getattr(ns, "external", False)
     f.antiquotations = getattr(ns, "antiquotations", False)
     f.drop_names_upto = getattr(ns, "drop_names_upto", _DROP_NAMES_UPTO)
@@ -985,6 +989,14 @@ def _run_unused(ns: argparse.Namespace) -> None:
         if flags.mode == "names" and (flags.by_theory or flags.roots):
             _usage_error("unused: --names lists entries; it does not "
                          "combine with --by-theory or --roots")
+        deleting = bool(flags.assume_deleted or flags.assume_deleted_file)
+        if deleting and flags.roots:
+            _usage_error("unused: --assume-deleted lists entries; it does "
+                         "not combine with --roots")
+        if flags.assume_deleted_file is not None and not Path(
+                flags.assume_deleted_file).expanduser().is_file():
+            _usage_error(f"unused: {flags.assume_deleted_file}: no such "
+                         "file (given to --assume-deleted-file)")
         sections = _load_sections(ns)
         if flags.keep_file is not None:
             if not Path(flags.keep_file).expanduser().is_file():
@@ -1000,6 +1012,9 @@ def _run_unused(ns: argparse.Namespace) -> None:
         _usage_error(f"unused: the `{view}` view does not take --roots")
     if flags.mode == "names":
         _usage_error(f"unused: the `{view}` view does not take --names")
+    if flags.assume_deleted or flags.assume_deleted_file:
+        _usage_error(f"unused: the `{view}` view does not take "
+                     "--assume-deleted")
     premises = view == "assumptions"
     if not files:
         cmd_unused_locals(load_index(), flags, premises_only=premises)
@@ -1691,6 +1706,23 @@ def _build_parser() -> argparse.ArgumentParser:
                         "comment line.  The names act as --keep does, so a "
                         "result kept for independent interest is decided "
                         "once, with its reason")
+    p.add_argument("--assume-deleted", action="append",
+                   metavar="NAME[,NAME...]",
+                   help="what-if: answer as though these entries were "
+                        "deleted.  They count as dead whatever cites them, "
+                        "--keep and evidence included, so with -r the "
+                        "cascade shows everything the deletion drags with "
+                        "it.  A row unused only because of the deletion is "
+                        "marked `[freed]`.  A citation from outside the set "
+                        "would break, so each one is listed first (on "
+                        "stderr under -c / --names) and the status is 3.  "
+                        "An unknown name exits 1.  Repeatable, or pass a "
+                        "comma-separated list")
+    p.add_argument("--assume-deleted-file", metavar="PATH",
+                   help="read more names to delete from PATH, in the "
+                        "--keep-file format (`THEORY NAME [NOTE...]`).  A "
+                        "line naming something its theory does not declare "
+                        "is an error here (exit 1), not a warning")
     p.add_argument("--evidence", "--implicit", dest="evidence",
                    choices=("mark", "hide"), default="mark",
                    help="an uncited entry may still be meant to stay, and "

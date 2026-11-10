@@ -531,6 +531,9 @@ class CmdFlags:
     roots: bool = False          # --roots (unused)
     keep: frozenset[str] = frozenset()  # --keep (unused: live roots)
     keep_file: str | None = None  # --keep-file / `.query-keep` [keep-file]
+    # --assume-deleted / --assume-deleted-file (unused) [assume-deleted]
+    assume_deleted: frozenset[str] = frozenset()
+    assume_deleted_file: str | None = None
     evidence: str = "mark"       # --evidence mark|hide (unused) [leaf-evidence]
     spans: bool = False          # --spans (unused --locals) [local-spans]
     external: bool = False       # --external (callers: skip defining theory)

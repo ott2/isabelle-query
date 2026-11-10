@@ -79,6 +79,9 @@ from isabelle_query.render import (
 # because those are the distinctions a caller has to make.  Documented in
 # `README.md`'s exit-status table.
 EXIT_UNRESOLVED = 1
+# `unused --assume-deleted`: the answer is complete, and says that deleting
+# the set would break a citation from outside it [assume-deleted].
+EXIT_BLOCKED = 3
 
 # The project's keep file, read by `unused` from the root [keep-file].
 KEEP_FILE = ".query-keep"
@@ -1976,7 +1979,17 @@ def _compute_unused_recursive(graph: CallGraph,
     depth 1 = became unused when depth-0 entries are removed, etc.
     """
     keep = keep or set()
-    unused: dict[str, int] = {n: 0 for n in _compute_unused(graph, keep)}
+    return _cascade(graph, keep,
+                    {n: 0 for n in _compute_unused(graph, keep)})
+
+
+def _cascade(graph: CallGraph, keep: set[str], unused: dict[str, int],
+             rounds: int | None = None) -> dict[str, int]:
+    """Grow `unused` (name → depth) to the fixed point, or by `rounds`
+    levels: a name joins when every one of its callers is in.  Names in
+    `keep` never do.  The seed is the caller's: the uncited entries for
+    `unused -r`, a deletion set for --assume-deleted [assume-deleted]."""
+    unused = dict(unused)
     depth = 1
     while True:
         # LEVEL-SYNCHRONISED: every test in this pass is against the frontier
@@ -1991,11 +2004,13 @@ def _compute_unused_recursive(graph: CallGraph,
         newly = [name for name in graph.all_names - frontier - keep
                  if (callers := graph.callers.get(name, set()))
                  and callers <= frontier]
-        if not newly:
+        if not newly or rounds == 0:
             return unused
         for name in newly:
             unused[name] = depth
         depth += 1
+        if rounds is not None:
+            rounds -= 1
 
 
 def _compute_forest(graph: CallGraph,
@@ -2088,12 +2103,26 @@ def _evidence_mark(marks: dict[str, list[str]] | None, name: str) -> str:
 
 def _render_unused(entries: list[tuple[str, Entry, int]],
                    flags: 'CmdFlags', recursive: bool,
-                   marks: dict[str, list[str]] | None = None) -> None:
-    """Shared rendering for unused and unused -r."""
+                   marks: dict[str, list[str]] | None = None,
+                   freed: set[str] | None = None,
+                   n_deleted: int = 0) -> None:
+    """Shared rendering for unused and unused -r.
+
+    Under --assume-deleted the rows are what deleting `n_deleted` entries
+    takes with it, and `freed` the names among them that `unused -r` does
+    not list today; their rows say `[freed]` [assume-deleted]."""
+
+    def freed_mark(name: str) -> str:
+        return "  [freed]" if freed is not None and name in freed else ""
+
     label = "transitively unused" if recursive else "unused"
     total = len(entries)
     n_marked = sum(1 for _, e, _ in entries if (marks or {}).get(e.name))
     marked = _evidence_count(n_marked, total)
+    if freed is not None:
+        n_freed = sum(1 for _, e, _ in entries if e.name in freed)
+        if n_freed:
+            marked = f", {n_freed} freed by the deletion{marked}"
 
     # Before the empty guard [count-mode-zero]: a project with nothing unused
     # has ZERO unused entries, and that is the answer a script wants — the one
@@ -2111,11 +2140,13 @@ def _render_unused(entries: list[tuple[str, Entry, int]],
             depth_mark = (f"  [cascade depth {depth}]"
                           if recursive and depth > 0 else "")
             print(f"{e.tag:<11}  {e.name:<42}  {theory}{depth_mark}"
-                  f"{_evidence_mark(marks, e.name)}")
+                  f"{freed_mark(e.name)}{_evidence_mark(marks, e.name)}")
         return
 
     if not entries:
-        print("No unused entries found.")
+        print(f"Deleting {_counted(n_deleted, 'entry', 'entries')} takes "
+              "nothing else with it." if n_deleted else
+              "No unused entries found.")
         return
 
     if flags.by_theory:
@@ -2139,7 +2170,16 @@ def _render_unused(entries: list[tuple[str, Entry, int]],
             print(f"  {count:3d}  {theory:<30s}  {lines:5d} lines  {names}")
         return
 
-    if recursive:
+    if n_deleted:
+        direct = sum(1 for _, _, d in entries if d == 1)
+        total_lines = sum(e.line_count for _, e, _ in entries
+                          if e.thy_line > 0)
+        how = (f"{direct} cited only from the set + {total - direct} "
+               "cascading" if recursive else "cited only from the set")
+        print(f"Deleting {_counted(n_deleted, 'entry', 'entries')} takes "
+              f"{_counted(total, 'more', 'more')} with it ({how}, "
+              f"{total_lines} source lines{marked}):\n")
+    elif recursive:
         direct = sum(1 for _, _, d in entries if d == 0)
         cascade = total - direct
         total_lines = sum(
@@ -2159,7 +2199,7 @@ def _render_unused(entries: list[tuple[str, Entry, int]],
         depth_mark = f"  [cascade depth {depth}]" if recursive and depth > 0 else ""
         print(f"{e.tag:<11}  {e.name:<42}  {theory}  "
               f"({e.src_start}..{e.thy_end}, {size} lines){depth_mark}"
-              f"{_evidence_mark(marks, e.name)}")
+              f"{freed_mark(e.name)}{_evidence_mark(marks, e.name)}")
 
 
 def _render_forest(sections: list[TheorySection],
@@ -2225,6 +2265,7 @@ def cmd_unused(sections: list[TheorySection], flags: 'CmdFlags') -> None:
     evidence = {n: ev for n, ev in _evidence(sections, flags.reach).items()
                 if n in graph.all_names and n not in keep}
     marks = evidence if flags.evidence == "mark" else {}
+    deleted = _deletion_set(sections, graph, flags)
 
     if flags.roots:
         # `mark` keeps the forest it always computed, tagging marked roots;
@@ -2235,12 +2276,23 @@ def cmd_unused(sections: list[TheorySection], flags: 'CmdFlags') -> None:
         return
 
     live = keep | set(evidence)
-    if flags.recursive:
-        unused_map = _compute_unused_recursive(graph, live)
+    if flags.recursive or deleted:
+        everything = _compute_unused_recursive(graph, live)
+        everything.update(_dead_marked(graph, everything, marks, True))
+    freed: set[str] | None = None
+    blockers: list[tuple[str, str]] = []
+    if deleted:
+        # [assume-deleted]: what goes with the set, which of it `unused -r`
+        # does not list today, and the citations the deletion would break.
+        unused_map = _dragged(graph, live, marks, flags.recursive, deleted)
+        freed = set(unused_map) - set(everything)
+        blockers = [(d, c) for d in sorted(deleted)
+                    for c in sorted(graph.callers.get(d, set()) - deleted)]
+    elif flags.recursive:
+        unused_map = everything
     else:
         unused_map = {n: 0 for n in _compute_unused(graph, live)}
-    unused_map.update(_dead_marked(graph, unused_map, marks,
-                                   flags.recursive))
+        unused_map.update(_dead_marked(graph, unused_map, marks, False))
 
     unused_entries: list[tuple[str, Entry, int]] = []
     for sec in sections:
@@ -2249,7 +2301,17 @@ def cmd_unused(sections: list[TheorySection], flags: 'CmdFlags') -> None:
                 if e.name in unused_map:
                     unused_entries.append((sec.theory, e, unused_map[e.name]))
 
-    _render_unused(unused_entries, flags, flags.recursive, marks)
+    # Blockers go to stdout in the full listing, where they are part of the
+    # answer, and to stderr under -c and --names, whose stdout a script reads.
+    if blockers:
+        _render_blockers(sections, blockers, everything,
+                         sys.stderr if flags.mode in ("count", "names")
+                         else sys.stdout)
+    _render_unused(unused_entries, flags, flags.recursive, marks, freed,
+                   len(deleted))
+    if blockers:
+        sys.stdout.flush()
+        sys.exit(EXIT_BLOCKED)
 
 
 def read_keep_file(path: Path, sections: list[TheorySection]) -> set[str]:
@@ -2272,18 +2334,27 @@ def read_keep_file(path: Path, sections: list[TheorySection]) -> set[str]:
 
     Graph nodes are names, so a kept name keeps every declaration of it, as
     `--keep` does."""
-    kept: set[str] = set()
-
-    def warn(n: int, msg: str) -> None:
+    kept, problems = read_names_file(path, sections)
+    for n, msg in problems:
         print(f"warning: {path}:{n}: {msg}", file=sys.stderr)
+    return kept
 
+
+def read_names_file(path: Path, sections: list[TheorySection]
+                    ) -> tuple[set[str], list[tuple[int, str]]]:
+    """The names a `THEORY NAME [NOTE...]` file lists, and its stale lines
+    as ``(line number, message)``.  The format is `read_keep_file`'s; the
+    caller decides whether a stale line is a warning (a keep file) or an
+    error (a deletion set [assume-deleted])."""
+    names: set[str] = set()
+    problems: list[tuple[int, str]] = []
     for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         parts = line.split(None, 2)
         if len(parts) < 2:
-            warn(n, "expected THEORY NAME [NOTE]")
+            problems.append((n, "expected THEORY NAME [NOTE]"))
             continue
         thy, name = parts[0], parts[1]
         if thy.endswith(".thy") or "/" in thy:
@@ -2292,12 +2363,12 @@ def read_keep_file(path: Path, sections: list[TheorySection]) -> set[str]:
                 thy = str(here)
         sec = _resolve_theory(sections, thy)
         if sec is None:
-            warn(n, f"no theory {parts[0]!r}")
+            problems.append((n, f"no theory {parts[0]!r}"))
         elif not any(e.name == name for e in sec.entries):
-            warn(n, f"{sec.theory} declares no {name!r}")
+            problems.append((n, f"{sec.theory} declares no {name!r}"))
         else:
-            kept.add(name)
-    return kept
+            names.add(name)
+    return names, problems
 
 
 def _evidence(sections: list[TheorySection], reach: str = "closure"
@@ -2372,6 +2443,81 @@ def _dead_marked(graph: CallGraph, dead: dict[str, int],
         elif recursive and cs <= dead.keys():
             out[n] = 1 + max(dead[c] for c in cs)
     return out
+
+
+def _dragged(graph: CallGraph, live: set[str],
+             marks: dict[str, list[str]], recursive: bool,
+             deleted: frozenset[str]) -> dict[str, int]:
+    """What deleting `deleted` takes with it, as ``{name: depth}``
+    [assume-deleted]: the entries every citer of which is deleted or itself
+    taken, at one more than their deepest citer.  The deleted names are the
+    seed, at depth 0, and are not in the result.
+
+    Nothing else counts as dead.  An entry also cited by an unused lemma
+    outside the set stays, since deleting it would break that lemma: the
+    answer is what can go WITH the set and nothing more, the set's
+    exclusive subtree.  Without `-r` it is one level.
+
+    A name in `deleted` is dead even if --keep, the keep file or its own
+    evidence would keep it, since naming it is the more specific decision.
+    An entry with evidence is listed, as `unused` lists it, but nothing
+    cascades through it."""
+    live = live - deleted
+    seed = {n: 0 for n in deleted}
+    out = _cascade(graph, live, seed, None if recursive else 1)
+    for n in marks:
+        cs = graph.callers.get(n, set())
+        if n not in deleted and cs and cs <= (out.keys() if recursive
+                                               else deleted):
+            out[n] = 1 + max(out[c] for c in cs)
+    for n in deleted:
+        out.pop(n, None)
+    return out
+
+
+def _deletion_set(sections: list[TheorySection], graph: CallGraph,
+                  flags: 'CmdFlags') -> frozenset[str]:
+    """The names --assume-deleted and --assume-deleted-file give, checked
+    [assume-deleted].
+
+    An unknown name is an error, not a warning as it is for --keep: a typo
+    in a deletion set would silently report a smaller cascade, which reads
+    exactly like a correct answer.  Each one is reported, stdout stays
+    empty, and the status is 1, as for any unresolved subject."""
+    names = set(flags.assume_deleted)
+    problems: list[str] = []
+    if flags.assume_deleted_file:
+        path = Path(flags.assume_deleted_file).expanduser()
+        listed, stale = read_names_file(path, sections)
+        names |= listed
+        problems += [f"{path}:{n}: {msg}" for n, msg in stale]
+    problems += [f"'{n}' is not in the entry index (given to --assume-deleted)"
+                 for n in sorted(set(flags.assume_deleted) - graph.all_names)]
+    if problems:
+        for msg in problems:
+            print(f"{_prog_name()}: {msg}", file=sys.stderr)
+        sys.exit(EXIT_UNRESOLVED)
+    return frozenset(names)
+
+
+def _render_blockers(sections: list[TheorySection],
+                     blockers: list[tuple[str, str]],
+                     dead: dict[str, int], stream) -> None:
+    """The citers outside a deletion set, one row per (deleted, citer)
+    pair [assume-deleted].  A citer that is itself in the answer is marked
+    `[unused]`: adding it to the set clears that row."""
+    by_name = _entry_by_name(sections)
+    w = max(len(d) for d, _ in blockers)
+    cw = max(len(c) for _, c in blockers)
+    n_names = len({d for d, _ in blockers})
+    print(f"{_counted(n_names, 'entry', 'entries')} to delete "
+          f"{'is' if n_names == 1 else 'are'} still cited from outside the "
+          f"set ({_counted(len(blockers), 'citation')}):\n", file=stream)
+    for d, c in blockers:
+        thy = by_name[c][0] if c in by_name else "?"
+        mark = "  [unused]" if c in dead else ""
+        print(f"  {d:<{w}}  cited by  {c:<{cw}}  {thy}{mark}", file=stream)
+    print(file=stream)
 
 
 def cmd_unused_locals(sections: list[TheorySection], flags: 'CmdFlags',

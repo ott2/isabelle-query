@@ -149,6 +149,20 @@ DTH/Pad.thy     pad_mono
 Each name acts as `--keep NAME`. A line whose theory does not declare the
 name is reported on stderr as stale.
 
+To plan a deletion before making it, name the entries to go:
+
+```
+query unused -r --assume-deleted root_a,root_b     # or --assume-deleted-file
+```
+
+The rows are what the set takes with it: entries cited only from the set,
+then only from those, and so on. An entry that anything outside the set
+cites stays, including an unused lemma you are not deleting, since deleting
+the entry would break that lemma. A row that `unused -r` does not list
+today is marked `[freed]`. Any citation of the set from outside it would
+break, so those are listed first and the exit status is `3`. `--names` drops
+the spans, so two runs diff cleanly across an edit.
+
 ### Unread proof-local names
 
 `unused facts` asks `unused`'s question one level down, inside a proof: which
@@ -212,7 +226,8 @@ the JSONL record schema.
 
 `0` the command ran; `1` the request could not be resolved (unknown theory,
 entry name or path, no subcommand); `2` bad usage — an argparse error, or **a
-root that could not be read**; `141` a write failed because a downstream reader
+root that could not be read**; `3` the answer is complete and is a refusal:
+`unused --assume-deleted` found a citation of the set from outside it; `141` a write failed because a downstream reader
 closed the pipe (`query shape census | head` over a corpus), as a shell reports
 for SIGPIPE.
 
