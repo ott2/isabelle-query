@@ -323,6 +323,16 @@ in `CONTRIBUTING.md`.
       would remove.  So frame it as a correctness fix, column-precise
       blocks, and time it, rather than as a speedup.
 
+- [ ] `[name-atom]` query's internal name atom (`parsing.ISA_NAME_CHAR`,
+      `SYM_NAME_RE`) is looser than Isabelle's identifier rule, which
+      `lexicon.IDENT` now follows exactly (#42).  The internal atom takes any
+      `\<...>` symbol as a name character, so `A\<and>B` is one name, not
+      `A` and `B`, and `\<varepsilon>` counts as a letter although
+      `Symbol.kind` says it is not one.  Moving the 21 call sites onto
+      `lexicon.IDENT` would make query's own citations follow the rule it
+      now publishes.  It moves citation counts, so measure the edge diff
+      over the AFP (`scripts/probe_edge_dump.py`) before deciding.
+
 ## Done
 
 Nothing — by design. Completed work is recorded in its commit messages, which
