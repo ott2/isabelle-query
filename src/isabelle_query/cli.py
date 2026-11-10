@@ -982,6 +982,9 @@ def _run_unused(ns: argparse.Namespace) -> None:
         if flags.spans:
             _usage_error("unused: --spans needs a proof-local view "
                          "(`unused facts --spans`)")
+        if flags.mode == "names" and (flags.by_theory or flags.roots):
+            _usage_error("unused: --names lists entries; it does not "
+                         "combine with --by-theory or --roots")
         sections = _load_sections(ns)
         if flags.keep_file is not None:
             if not Path(flags.keep_file).expanduser().is_file():
@@ -995,6 +998,8 @@ def _run_unused(ns: argparse.Namespace) -> None:
         return
     if flags.roots:
         _usage_error(f"unused: the `{view}` view does not take --roots")
+    if flags.mode == "names":
+        _usage_error(f"unused: the `{view}` view does not take --names")
     premises = view == "assumptions"
     if not files:
         cmd_unused_locals(load_index(), flags, premises_only=premises)
@@ -1668,6 +1673,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="group by theory with line counts")
     p.add_argument("--roots", action="store_true",
                    help="forest summary: each root with exclusive subtree size")
+    _add_names_flag(p, "entries view: the rows without their spans or "
+                       "the header, so that diffing two runs shows only "
+                       "entries whose status changed; an edit above an "
+                       "entry moves its span but not its row")
     p.add_argument("--keep", action="append", metavar="NAME[,NAME...]",
                    help="treat these names as live roots (never flag as "
                         "unused, and stop the cascade at them).  Repeatable, "

@@ -2102,6 +2102,18 @@ def _render_unused(entries: list[tuple[str, Entry, int]],
         print(total)
         return
 
+    if flags.mode == "names":
+        # Span-free and headerless [unused-names]: an edit above an entry
+        # moves its span, and a before/after diff of the full listing then
+        # shows every row below the edit as removed and added again.  These
+        # rows change only when the answer does.
+        for theory, e, depth in entries:
+            depth_mark = (f"  [cascade depth {depth}]"
+                          if recursive and depth > 0 else "")
+            print(f"{e.tag:<11}  {e.name:<42}  {theory}{depth_mark}"
+                  f"{_evidence_mark(marks, e.name)}")
+        return
+
     if not entries:
         print("No unused entries found.")
         return
