@@ -13,10 +13,10 @@ which come from session resolution, not from assuming HOL.
 
 Provenance:
     Isabelle:    Isabelle2025-2
-    Extracted:   2026-07-24
+    Extracted:   2026-11-10
     Methods:     37 (Pure image method name space — ML_process -l Pure)
     Attributes:  101 (Pure image attribute name space)
-    Keywords:    222 (Pure.thy keyword table + thy_header bootstrap; /Applications/Isabelle2025-2.app/src)
+    Keywords:    224 (Pure.thy keyword table + thy_header bootstrap; /Applications/Isabelle2025-2.app/src)
 
 These power isabelle_query's token *router*: a proof-body token is a fact
 citation (a call-graph edge) only if it is none of a proof method, an
@@ -66,7 +66,7 @@ ATTRIBUTES = frozenset({
 # outer-syntax keywords (commands, proof language, quasi-commands, bootstrap):
 # structural, never a fact citation.
 KEYWORDS = frozenset({
-    'ML_command', 'ML_export', 'ML_file', 'ML_file_debug',
+    'ML', 'ML_command', 'ML_export', 'ML_file', 'ML_file_debug',
     'ML_file_no_debug', 'ML_prf', 'ML_val', 'ROOTS_file', 'SML_export',
     'SML_file', 'SML_file_debug', 'SML_file_no_debug', 'SML_import',
     'abbreviation', 'abbrevs', 'adhoc_overloading', 'alias', 'also', 'and',
@@ -106,9 +106,9 @@ KEYWORDS = frozenset({
     'subgoal', 'sublocale', 'subparagraph', 'subsection', 'subsubsection',
     'supply', 'syntax', 'syntax_consts', 'syntax_declaration',
     'syntax_types', 'term', 'text', 'text_raw', 'then', 'then have',
-    'then show', 'theorem', 'thm', 'thm_deps', 'thm_oracles', 'thus',
-    'thy_deps', 'translations', 'txt', 'typ', 'type_alias', 'type_notation',
-    'type_synonym', 'typed_print_translation', 'typedecl', 'ultimately',
-    'unbundle', 'unchecked', 'unfolding', 'unused_thms', 'using',
-    'weak_congproc', 'welcome', 'when', 'where', 'with', 'write',
+    'then show', 'theorem', 'theory', 'thm', 'thm_deps', 'thm_oracles',
+    'thus', 'thy_deps', 'translations', 'txt', 'typ', 'type_alias',
+    'type_notation', 'type_synonym', 'typed_print_translation', 'typedecl',
+    'ultimately', 'unbundle', 'unchecked', 'unfolding', 'unused_thms',
+    'using', 'weak_congproc', 'welcome', 'when', 'where', 'with', 'write',
 })

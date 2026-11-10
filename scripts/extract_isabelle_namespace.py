@@ -102,7 +102,10 @@ def _bootstrap_keywords(src: Path) -> dict[str, str]:
     th = (src / "Pure" / "Thy" / "thy_header.ML").read_text(
         encoding="utf-8", errors="replace")
     consts = dict(re.findall(r'val\s+(\w+)\s*=\s*"([^"]+)"', th))
-    m = re.search(r"bootstrap_keywords\b.*?add_keywords\s*\[(.*?)\]", th, re.S)
+    # The list ends at `];`.  It holds `]`s of its own (`command_spec
+    # (Keyword.thy_begin, ["theory"])`), and ending at the first one lost
+    # the entries after it, `theory` and `ML` among them [api-keywords].
+    m = re.search(r"bootstrap_keywords\b.*?add_keywords\s*\[(.*?)\];", th, re.S)
     out: dict[str, str] = {}
     if m:
         for tok in re.findall(r'\(\(\s*("?[\w]+"?)\s*,', m.group(1)):
